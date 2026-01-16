@@ -2,8 +2,83 @@
 
 use dez80::Instruction;
 use dskmanager::*;
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{Context, Editor, Helper};
+
+/// Command completer for the sandbox REPL
+struct CommandCompleter {
+    commands: Vec<&'static str>,
+}
+
+impl CommandCompleter {
+    fn new() -> Self {
+        Self {
+            commands: vec![
+                "create",
+                "dasm",
+                "detect-protection",
+                "disassemble",
+                "exit",
+                "fs-list",
+                "fs-mount",
+                "fs-read",
+                "help",
+                "info",
+                "load",
+                "open",
+                "quit",
+                "read-sector",
+                "save",
+                "sectors",
+                "strings",
+                "tracks",
+            ],
+        }
+    }
+}
+
+impl Completer for CommandCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Only complete the first word (command name)
+        let line_to_cursor = &line[..pos];
+        if line_to_cursor.contains(' ') {
+            // Already past the command, don't complete
+            return Ok((pos, vec![]));
+        }
+
+        let prefix = line_to_cursor.to_lowercase();
+        let matches: Vec<Pair> = self
+            .commands
+            .iter()
+            .filter(|cmd| cmd.starts_with(&prefix))
+            .map(|cmd| Pair {
+                display: cmd.to_string(),
+                replacement: cmd.to_string(),
+            })
+            .collect();
+
+        Ok((0, matches))
+    }
+}
+
+impl Hinter for CommandCompleter {
+    type Hint = String;
+}
+
+impl Highlighter for CommandCompleter {}
+impl Validator for CommandCompleter {}
+impl Helper for CommandCompleter {}
 
 /// Get the path to the history file
 fn history_path() -> Option<std::path::PathBuf> {
@@ -18,7 +93,8 @@ fn main() {
     println!("Interactive console for exploring DSK format disk images.");
     println!("Type 'help' for available commands\n");
 
-    let mut rl = DefaultEditor::new().expect("Failed to create editor");
+    let mut rl = Editor::new().expect("Failed to create editor");
+    rl.set_helper(Some(CommandCompleter::new()));
 
     // Load history if available
     if let Some(history_path) = history_path() {
