@@ -1,5 +1,6 @@
 /// Interactive DSK sandbox console application
 
+use dez80::Instruction;
 use dskmanager::*;
 use std::io::{self, Write};
 
@@ -101,7 +102,7 @@ fn main() {
 
                     match img.read_sector(side, track, sector_id) {
                         Ok(data) => {
-                            println!("Sector {}:{}:{:#04X} ({} bytes):", side, track, sector_id, data.len());
+                            println!("Sector {}:{}:{} ({} bytes):", side, track, sector_id, data.len());
                             print_hex_dump(data, 256);
                         }
                         Err(e) => println!("Error: {}", e),
@@ -234,6 +235,46 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "disassemble" | "dasm" => {
+                if let Some(ref img) = image {
+                    let side: u8 = 0;
+                    let (track, sector_id) = if parts.len() >= 3 {
+                        let t: u8 = parts[1].parse().unwrap_or(0);
+                        let s: u8 = parse_hex_or_dec(&parts[2]).unwrap_or(0);
+                        (t, s)
+                    } else if parts.len() == 2 {
+                        let t: u8 = parts[1].parse().unwrap_or(0);
+                        // Find lowest sector ID on specified track
+                        match find_lowest_sector_id(img, side, t) {
+                            Some(s) => (t, s),
+                            None => {
+                                println!("No sectors found on track {}.", t);
+                                continue;
+                            }
+                        }
+                    } else {
+                        // Default: track 0, lowest sector ID
+                        match find_lowest_sector_id(img, side, 0) {
+                            Some(s) => (0, s),
+                            None => {
+                                println!("No sectors found on track 0.");
+                                continue;
+                            }
+                        }
+                    };
+
+                    match img.read_sector(side, track, sector_id) {
+                        Ok(data) => {
+                            println!("=== Z80 Disassembly: Track {}, Sector {} ({} bytes) ===\n",
+                                track, sector_id, data.len());
+                            disassemble_z80(data);
+                        }
+                        Err(e) => println!("Error: {}", e),
+                    }
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             _ => {
                 println!("Unknown command: {}. Type 'help' for available commands.", command);
             }
@@ -279,11 +320,12 @@ fn print_help() {
     println!("  info                           - Show disk information");
     println!("  tracks                         - List all tracks");
     println!("  sectors [track] [side]         - List sectors (all or specific track/side)");
-    println!("  read-sector <s> <t> <id>       - Read and display a sector (hex: 0xC1)");
+    println!("  read-sector <s> <t> <id>       - Read and display a sector");
     println!("  fs-mount                       - Mount CP/M filesystem");
     println!("  fs-list                        - List files on CP/M filesystem");
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
     println!("  detect-protection              - Detect copy protection scheme");
+    println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  help                           - Show this help");
     println!("  quit, exit                     - Exit the sandbox");
@@ -296,7 +338,7 @@ fn print_info(image: &DskImage) {
     println!("Tracks per side: {}", image.spec().num_tracks);
     println!("Sectors per track: {}", image.spec().sectors_per_track);
     println!("Sector size: {} bytes", image.spec().sector_size);
-    println!("First sector ID: {:#04X}", image.spec().first_sector_id);
+    println!("First sector ID: {}", image.spec().first_sector_id);
     println!("Total capacity: {} KB", image.total_capacity_kb());
     println!("Changed: {}", if image.is_changed() { "Yes" } else { "No" });
 }
@@ -309,7 +351,7 @@ fn list_tracks(image: &DskImage) {
             let sector_ids: Vec<String> = track
                 .sector_ids()
                 .iter()
-                .map(|id| format!("{:#04X}", id))
+                .map(|id| format!("{}", id))
                 .collect();
 
             println!(
@@ -339,7 +381,7 @@ fn list_sectors_on_track(image: &DskImage, side: u8, track: u8) {
                 };
 
                 println!(
-                    "{:<8X} {:<8} {:<8} {:<12} {:<12} {:<8}",
+                    "{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}",
                     sector.id.sector,
                     sector.id.track,
                     sector.id.side,
@@ -377,7 +419,7 @@ fn list_all_sectors(image: &DskImage) {
                 };
 
                 println!(
-                    "{:<8X} {:<8} {:<8} {:<12} {:<12} {:<8}",
+                    "{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}",
                     sector.id.sector,
                     sector.id.track,
                     sector.id.side,
@@ -431,5 +473,57 @@ fn print_hex_dump(data: &[u8], max_bytes: usize) {
 
     if data.len() > max_bytes {
         println!("... ({} more bytes)", data.len() - max_bytes);
+    }
+}
+
+fn parse_hex_or_dec(s: &str) -> Option<u8> {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        u8::from_str_radix(&s[2..], 16).ok()
+    } else {
+        s.parse().ok()
+    }
+}
+
+fn find_lowest_sector_id(image: &DskImage, side: u8, track: u8) -> Option<u8> {
+    let disk = image.disks().get(side as usize)?;
+    let track_data = disk.get_track(track)?;
+    track_data
+        .sectors()
+        .iter()
+        .map(|s| s.id.sector)
+        .min()
+}
+
+fn disassemble_z80(data: &[u8]) {
+    let mut slice: &[u8] = data;
+    let mut address: u16 = 0;
+
+    while !slice.is_empty() {
+        let start_len = slice.len();
+
+        match Instruction::decode_one(&mut slice) {
+            Ok(instruction) => {
+                let bytes_consumed = start_len - slice.len();
+                let bytes: Vec<String> = data[address as usize..address as usize + bytes_consumed]
+                    .iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect();
+
+                println!(
+                    "{:04X}  {:<12} {}",
+                    address,
+                    bytes.join(" "),
+                    instruction
+                );
+
+                address += bytes_consumed as u16;
+            }
+            Err(_) => {
+                // Invalid instruction - show as data byte
+                println!("{:04X}  {:02X}           DB {:02X}h", address, slice[0], slice[0]);
+                slice = &slice[1..];
+                address += 1;
+            }
+        }
     }
 }

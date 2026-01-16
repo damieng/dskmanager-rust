@@ -32,7 +32,7 @@ use dskmanager::{DskImage, FormatSpec, CpmFileSystem, FileSystem};
 let image = DskImage::open("disk.dsk")?;
 
 // Read a sector
-let data = image.read_sector(0, 0, 0xC1)?;
+let data = image.read_sector(0, 0, 193)?;
 println!("Sector data: {} bytes", data.len());
 
 // Create a new DSK image
@@ -41,7 +41,7 @@ let mut new_image = DskImage::create(spec)?;
 
 // Write a sector
 let data = vec![0xE5; 512];
-new_image.write_sector(0, 0, 0xC1, &data)?;
+new_image.write_sector(0, 0, 193, &data)?;
 
 // Save the image
 new_image.save("new_disk.dsk")?;
@@ -115,11 +115,12 @@ Available commands:
 - `create [amstrad|spectrum|pcw]` - Create a new DSK image
 - `info` - Show disk information
 - `tracks` - List all tracks
-- `read-sector <side> <track> <id>` - Read and display a sector
+- `read-sector <side> <track> <sector>` - Read and display a sector
 - `fs-mount` - Mount CP/M filesystem
 - `fs-list` - List files on CP/M filesystem
 - `fs-read <filename>` - Read file from CP/M filesystem
 - `detect-protection` - Detect copy protection schemes on the disk
+- `disassemble [track] [sector]` - Disassemble Z80 code from a sector
 - `save <path>` - Save image to file
 - `help` - Show help
 - `quit` - Exit
