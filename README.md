@@ -8,6 +8,7 @@ An idiomatic Rust library and cli for reading and writing DSK disk image files w
 - **Track & Sector Abstraction**: Low-level access to disk geometry with FDC status codes
 - **CP/M Filesystem**: Read files from CP/M filesystems (Amstrad CPC, Spectrum +3, PCW)
 - **Format Presets**: Built-in configurations for Amstrad CPC, Spectrum +3, PCW, and IBM PC formats
+- **Copy Protection Detection**: Automatic detection of 20+ copy protection schemes (Alkatraz, Speedlock, Hexagon, Frontier, and more)
 - **Comprehensive Testing**: Extensive unit and integration test coverage
 - **Interactive Sandbox**: Console application for exploring DSK files
 
@@ -44,6 +45,21 @@ new_image.write_sector(0, 0, 0xC1, &data)?;
 
 // Save the image
 new_image.save("new_disk.dsk")?;
+```
+
+### Detecting Copy Protection
+
+```rust
+use dskmanager::{DskImage, protection};
+
+let image = DskImage::open("game.dsk")?;
+
+// Check each side of the disk
+for (side_idx, disk) in image.disks().iter().enumerate() {
+    if let Some(result) = protection::detect(disk) {
+        println!("Side {}: {} [{}]", side_idx, result.name, result.reason);
+    }
+}
 ```
 
 ### Working with CP/M Filesystems
@@ -103,6 +119,7 @@ Available commands:
 - `fs-mount` - Mount CP/M filesystem
 - `fs-list` - List files on CP/M filesystem
 - `fs-read <filename>` - Read file from CP/M filesystem
+- `detect-protection` - Detect copy protection schemes on the disk
 - `save <path>` - Save image to file
 - `help` - Show help
 - `quit` - Exit
@@ -126,6 +143,32 @@ Presets for common formats:
 ### Filesystems
 
 - CP/M (read-only support for Amstrad CPC, Spectrum +3, PCW)
+
+### Copy Protection Detection
+
+The library can automatically detect over 20 copy protection schemes commonly used on Amstrad CPC and ZX Spectrum +3 disks, including:
+
+- **Alkatraz** (CPC and +3 variants)
+- **Speedlock** (multiple versions from 1985-1990)
+- **Hexagon**
+- **Frontier**
+- **Paul Owens**
+- **Three Inch Loader** (multiple types)
+- **P.M.S.** (1986-1987)
+- **DiscSYS** / **Mean Protection System**
+- **KBI-19**, **CAAV**, **KBI-10**
+- **W.R.M. Disc Protection**
+- **Players**
+- **Rainbow Arts**
+- **Infogrames/Logiciel**
+- **ERE/Remi HERBULOT**
+- **Amsoft/EXOPAL**
+- **ARMOURLOC**
+- **Studio B** / **DiscLoc/Oddball**
+- **Laser Load by C.J. Pink**
+- And more...
+
+Detection works by analyzing disk geometry, FDC status codes, and searching for known signatures in sector data. Both signed (with embedded signatures) and unsigned (pattern-based) protections are detected.
 
 ## Architecture
 
@@ -206,7 +249,6 @@ Contributions welcome! Please ensure:
 
 Future enhancements:
 
-- [ ] Copy protection detection
 - [ ] CP/M filesystem write support
 - [ ] Tatung Einstein file system support
 - [ ] MGT filesystem support (Disciple/PlusD/SAM Coupe)

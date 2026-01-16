@@ -74,6 +74,8 @@ pub mod format;
 pub mod image;
 /// I/O operations for reading and writing DSK files
 pub mod io;
+/// Copy protection detection
+pub mod protection;
 
 // Re-export common types
 pub use error::{DskError, Result};

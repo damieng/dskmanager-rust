@@ -194,6 +194,27 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "detect-protection" => {
+                if let Some(ref img) = image {
+                    let mut found_any = false;
+                    let has_multiple_sides = img.disks().len() > 1;
+                    for (side_idx, disk) in img.disks().iter().enumerate() {
+                        if let Some(result) = dskmanager::protection::detect(disk) {
+                            if has_multiple_sides {
+                                println!("Side {}: {} [{}]", side_idx, result.name, result.reason);
+                            } else {
+                                println!("{} [{}]", result.name, result.reason);
+                            }
+                            found_any = true;
+                        }
+                    }
+                    if !found_any {
+                        println!("No copy protection detected.");
+                    }
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             "sectors" => {
                 if let Some(ref img) = image {
                     if parts.len() >= 2 {
@@ -262,6 +283,7 @@ fn print_help() {
     println!("  fs-mount                       - Mount CP/M filesystem");
     println!("  fs-list                        - List files on CP/M filesystem");
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
+    println!("  detect-protection              - Detect copy protection scheme");
     println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  help                           - Show this help");
     println!("  quit, exit                     - Exit the sandbox");
