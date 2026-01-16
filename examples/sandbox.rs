@@ -2,28 +2,60 @@
 
 use dez80::Instruction;
 use dskmanager::*;
-use std::io::{self, Write};
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+
+/// Get the path to the history file
+fn history_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|mut p| {
+        p.push(".dskmanager_history");
+        p
+    })
+}
 
 fn main() {
     println!("--- DSKManager Sandbox ---");
     println!("Interactive console for exploring DSK format disk images.");
     println!("Type 'help' for available commands\n");
 
+    let mut rl = DefaultEditor::new().expect("Failed to create editor");
+
+    // Load history if available
+    if let Some(history_path) = history_path() {
+        let _ = rl.load_history(&history_path);
+    }
+
     let mut image: Option<DskImage> = None;
 
     loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            break;
-        }
+        let readline = rl.readline("> ");
+        let input = match readline {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => {
+                println!("^C");
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                // Save history before exiting
+                if let Some(history_path) = history_path() {
+                    let _ = rl.save_history(&history_path);
+                }
+                println!("Goodbye!");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        };
 
         let input = input.trim();
         if input.is_empty() {
             continue;
         }
+
+        // Add to history
+        let _ = rl.add_history_entry(input);
 
         let parts = parse_command_line(input);
         if parts.is_empty() {
@@ -36,6 +68,10 @@ fn main() {
                 print_help();
             }
             "quit" | "exit" => {
+                // Save history before exiting
+                if let Some(history_path) = history_path() {
+                    let _ = rl.save_history(&history_path);
+                }
                 println!("Goodbye!");
                 break;
             }
