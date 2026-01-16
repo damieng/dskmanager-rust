@@ -1,0 +1,28 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock (should be ignored for libraries, kept for binaries)
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code configuration
+.claude/
+
+# Debug and profiling
+*.profdata
+*.gcda
+*.gcno
+
+# Test coverage
+tarpaulin-report.html
+cobertura.xml
+*.profraw

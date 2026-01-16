@@ -1,0 +1,26 @@
+[package]
+name = "dskmanager-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Damien Guard"]
+description = "A Rust library for reading and writing DSK disk image files with filesystem support"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/damieng/dskmanager-rust"
+homepage = "https://github.com/damieng/dskmanager-rust"
+readme = "README.md"
+keywords = ["dsk", "disk-image", "cpm", "amstrad", "spectrum"]
+categories = ["filesystem", "parser-implementations"]
+
+[lib]
+name = "dskmanager"
+path = "src/lib.rs"
+
+[[examples]]
+name = "sandbox"
+path = "examples/sandbox.rs"
+
+[dependencies]
+thiserror = "2.0"
+
+[dev-dependencies]
+proptest = "1.4"
