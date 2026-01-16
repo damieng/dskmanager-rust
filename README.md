@@ -25,7 +25,7 @@ dskmanager = "0.1"
 ### Basic Usage
 
 ```rust
-use rust_dm::{DskImage, FormatSpec, CpmFileSystem, FileSystem};
+use dskmanager::{DskImage, FormatSpec, CpmFileSystem, FileSystem};
 
 // Open an existing DSK file
 let image = DskImage::open("disk.dsk")?;
@@ -49,7 +49,7 @@ new_image.save("new_disk.dsk")?;
 ### Working with CP/M Filesystems
 
 ```rust
-use rust_dm::{DskImage, CpmFileSystem};
+use dskmanager::{DskImage, CpmFileSystem};
 
 let image = DskImage::open("cpm_disk.dsk")?;
 let fs = CpmFileSystem::from_image(&image)?;
@@ -72,7 +72,7 @@ println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
 ### Using the Builder Pattern
 
 ```rust
-use rust_dm::{DskImage, DskFormat};
+use dskmanager::{DskImage, DskFormat};
 
 let image = DskImage::builder()
     .format(DskFormat::Extended)

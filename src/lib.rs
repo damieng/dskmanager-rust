@@ -40,7 +40,7 @@ for entry in fs.read_dir()? {
 
 // Read a file
 let contents = fs.read_file("README.TXT")?;
-# Ok::<(), rust_dm::DskError>(())
+# Ok::<(), dskmanager::DskError>(())
 ```
 
 ## DSK Format Specifications
