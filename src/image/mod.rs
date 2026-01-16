@@ -15,7 +15,7 @@ pub use sector::{Sector, SectorId, SectorStatus};
 pub use track::{DataRate, RecordingMode, Track};
 
 use crate::error::{DskError, Result};
-use crate::format::{DskFormat, FormatSpec};
+use crate::format::{DskFormat, FormatSpec, SideMode};
 use std::path::Path;
 
 /// Main DSK image container
@@ -170,6 +170,74 @@ impl DskImage {
     /// Get the total capacity in kilobytes
     pub fn total_capacity_kb(&self) -> usize {
         self.spec.total_capacity_kb()
+    }
+
+    /// Read the entire disk in logical order
+    ///
+    /// This reads the disk as a real FDC would, respecting:
+    /// - Sector ID order (sectors sorted by ID, not physical position)
+    /// - Side mode (how double-sided disks interleave tracks)
+    ///
+    /// # Side Modes
+    ///
+    /// - `SingleSide`: All tracks sequentially from side 0
+    /// - `Alternate`: T0S0, T0S1, T1S0, T1S1... (interleaved by track)
+    /// - `Successive`: All of side 0, then all of side 1
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use dskmanager::DskImage;
+    ///
+    /// let image = DskImage::open("disk.dsk")?;
+    /// let data = image.read_logical();
+    /// println!("Read {} bytes in logical order", data.len());
+    /// # Ok::<(), dskmanager::DskError>(())
+    /// ```
+    pub fn read_logical(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        match self.spec.side_mode {
+            SideMode::SingleSide => {
+                // Single side: just read all tracks in order
+                if let Some(disk) = self.get_disk(0) {
+                    for track_num in 0..disk.track_count() {
+                        if let Some(track) = disk.get_track(track_num as u8) {
+                            track.read_logical(&mut data);
+                        }
+                    }
+                }
+            }
+            SideMode::Alternate => {
+                // Alternating: T0S0, T0S1, T1S0, T1S1, ...
+                let max_tracks = self
+                    .disks
+                    .iter()
+                    .map(|d| d.track_count())
+                    .max()
+                    .unwrap_or(0);
+
+                for track_num in 0..max_tracks {
+                    for disk in &self.disks {
+                        if let Some(track) = disk.get_track(track_num as u8) {
+                            track.read_logical(&mut data);
+                        }
+                    }
+                }
+            }
+            SideMode::Successive => {
+                // Successive: all of side 0, then all of side 1
+                for disk in &self.disks {
+                    for track_num in 0..disk.track_count() {
+                        if let Some(track) = disk.get_track(track_num as u8) {
+                            track.read_logical(&mut data);
+                        }
+                    }
+                }
+            }
+        }
+
+        data
     }
 
     // Note: with_filesystem methods are not provided due to lifetime complexity.

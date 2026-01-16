@@ -121,6 +121,7 @@ Available commands:
 - `fs-read <filename>` - Read file from CP/M filesystem
 - `detect-protection` - Detect copy protection schemes on the disk
 - `disassemble [track] [sector]` - Disassemble Z80 code from a sector
+- `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
 - `save <path>` - Save image to file
 - `help` - Show help
 - `quit` - Exit

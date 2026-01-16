@@ -198,6 +198,31 @@ impl Track {
     pub fn has_sector(&self, sector_id: u8) -> bool {
         self.sector_map.contains_key(&sector_id)
     }
+
+    /// Read sectors in logical order (sorted by sector ID)
+    ///
+    /// Appends sector data to the provided buffer, reading sectors
+    /// in ascending order by their sector ID (as a real FDC would).
+    pub fn read_logical(&self, data: &mut Vec<u8>) {
+        let mut sector_ids: Vec<u8> = self.sectors.iter().map(|s| s.id.sector).collect();
+        sector_ids.sort();
+
+        for sector_id in sector_ids {
+            if let Some(sector) = self.get_sector(sector_id) {
+                data.extend_from_slice(sector.data());
+            }
+        }
+    }
+
+    /// Read sectors in logical order, returning a new Vec
+    ///
+    /// Convenience method that returns sector data as a new Vec
+    /// instead of appending to an existing buffer.
+    pub fn read_logical_to_vec(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        self.read_logical(&mut data);
+        data
+    }
 }
 
 #[cfg(test)]

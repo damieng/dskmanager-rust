@@ -275,6 +275,45 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "strings" => {
+                if let Some(ref img) = image {
+                    // Parse optional arguments: strings [min_length] [min_unique] [charset]
+                    let min_length: usize = if parts.len() >= 2 {
+                        parts[1].parse().unwrap_or(4)
+                    } else {
+                        4
+                    };
+
+                    let min_unique: usize = if parts.len() >= 3 {
+                        parts[2].parse().unwrap_or(3)
+                    } else {
+                        3
+                    };
+
+                    let charset: Vec<u8> = if parts.len() >= 4 {
+                        parse_charset(&parts[3])
+                    } else {
+                        default_ascii_chars()
+                    };
+
+                    let strings = find_strings_in_disk(img, min_length, min_unique, &charset);
+
+                    if strings.is_empty() {
+                        println!("No strings found (min length: {}, min unique: {}).", min_length, min_unique);
+                    } else {
+                        println!("=== Strings (min length: {}, min unique: {}) ===\n", min_length, min_unique);
+                        for hit in &strings {
+                            println!(
+                                "S{}:T{}:{}+{:03X}: {}",
+                                hit.side, hit.track, hit.sector, hit.offset, hit.text
+                            );
+                        }
+                        println!("\nFound {} strings.", strings.len());
+                    }
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             _ => {
                 println!("Unknown command: {}. Type 'help' for available commands.", command);
             }
@@ -326,6 +365,7 @@ fn print_help() {
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
+    println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
     println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  help                           - Show this help");
     println!("  quit, exit                     - Exit the sandbox");
@@ -524,6 +564,166 @@ fn disassemble_z80(data: &[u8]) {
                 slice = &slice[1..];
                 address += 1;
             }
+        }
+    }
+}
+
+/// Default ASCII character set for strings command
+/// Conservative set to match English-like words, not random byte sequences
+fn default_ascii_chars() -> Vec<u8> {
+    let mut chars = Vec::new();
+    // A-Z
+    chars.extend(b'A'..=b'Z');
+    // a-z
+    chars.extend(b'a'..=b'z');
+    // 0-9
+    chars.extend(b'0'..=b'9');
+    // Space and common punctuation found in text
+    chars.extend(b" !\"'()*+,-.:;=?".iter());
+    chars
+}
+
+/// Parse a charset specification like "A-Za-z0-9 " or "32-126"
+fn parse_charset(spec: &str) -> Vec<u8> {
+    let mut chars = Vec::new();
+    let mut iter = spec.chars().peekable();
+
+    while let Some(ch) = iter.next() {
+        if iter.peek() == Some(&'-') {
+            // Range like A-Z
+            iter.next(); // consume '-'
+            if let Some(end_ch) = iter.next() {
+                let start = ch as u8;
+                let end = end_ch as u8;
+                if start <= end {
+                    chars.extend(start..=end);
+                }
+            }
+        } else {
+            chars.push(ch as u8);
+        }
+    }
+
+    if chars.is_empty() {
+        default_ascii_chars()
+    } else {
+        chars
+    }
+}
+
+/// A string found in the disk with its location
+struct StringHit {
+    side: usize,
+    track: u8,
+    sector: u8,
+    offset: usize,
+    text: String,
+}
+
+/// Find strings in a disk, iterating in logical order
+fn find_strings_in_disk(image: &DskImage, min_length: usize, min_unique: usize, charset: &[u8]) -> Vec<StringHit> {
+    let mut hits = Vec::new();
+    let spec = image.spec();
+
+    match spec.side_mode {
+        SideMode::SingleSide => {
+            if let Some(disk) = image.get_disk(0) {
+                for track_num in 0..disk.track_count() {
+                    find_strings_in_track(disk, 0, track_num as u8, min_length, min_unique, charset, &mut hits);
+                }
+            }
+        }
+        SideMode::Alternate => {
+            let max_tracks = image
+                .disks()
+                .iter()
+                .map(|d| d.track_count())
+                .max()
+                .unwrap_or(0);
+
+            for track_num in 0..max_tracks {
+                for (side_idx, disk) in image.disks().iter().enumerate() {
+                    find_strings_in_track(disk, side_idx, track_num as u8, min_length, min_unique, charset, &mut hits);
+                }
+            }
+        }
+        SideMode::Successive => {
+            for (side_idx, disk) in image.disks().iter().enumerate() {
+                for track_num in 0..disk.track_count() {
+                    find_strings_in_track(disk, side_idx, track_num as u8, min_length, min_unique, charset, &mut hits);
+                }
+            }
+        }
+    }
+
+    hits
+}
+
+/// Count unique characters in a string
+fn unique_char_count(s: &str) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    for c in s.chars() {
+        seen.insert(c);
+    }
+    seen.len()
+}
+
+/// Find strings in a single track
+fn find_strings_in_track(
+    disk: &image::Disk,
+    side: usize,
+    track_num: u8,
+    min_length: usize,
+    min_unique: usize,
+    charset: &[u8],
+    hits: &mut Vec<StringHit>,
+) {
+    let Some(track) = disk.get_track(track_num) else {
+        return;
+    };
+
+    // Get sectors sorted by ID
+    let mut sector_ids: Vec<u8> = track.sectors().iter().map(|s| s.id.sector).collect();
+    sector_ids.sort();
+
+    for sector_id in sector_ids {
+        let Some(sector) = track.get_sector(sector_id) else {
+            continue;
+        };
+
+        let data = sector.data();
+        let mut current_string = String::new();
+        let mut start_offset = 0;
+
+        for (i, &byte) in data.iter().enumerate() {
+            if charset.contains(&byte) {
+                if current_string.is_empty() {
+                    start_offset = i;
+                }
+                current_string.push(byte as char);
+            } else {
+                if current_string.len() >= min_length && unique_char_count(&current_string) >= min_unique {
+                    hits.push(StringHit {
+                        side,
+                        track: track_num,
+                        sector: sector_id,
+                        offset: start_offset,
+                        text: current_string.clone(),
+                    });
+                }
+                current_string.clear();
+            }
+        }
+
+        // Don't forget trailing string
+        if current_string.len() >= min_length && unique_char_count(&current_string) >= min_unique {
+            hits.push(StringHit {
+                side,
+                track: track_num,
+                sector: sector_id,
+                offset: start_offset,
+                text: current_string,
+            });
         }
     }
 }
