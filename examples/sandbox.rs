@@ -513,20 +513,29 @@ fn print_info(image: &DskImage) {
 fn list_tracks(image: &DskImage) {
     println!("=== Tracks ===");
     for (side_idx, disk) in image.disks().iter().enumerate() {
-        println!("Side {}:", side_idx);
-        for track in disk.tracks() {
-            let sector_ids: Vec<String> = track
-                .sector_ids()
-                .iter()
-                .map(|id| format!("{}", id))
-                .collect();
-
+        println!("\nSide {}:", side_idx);
+        println!(
+            "{:<8} {:<8} {:<12} {:<8} {:<6} {:<8}",
+            "Logical", "Physical", "Track Size", "Sectors", "Gap", "Filler"
+        );
+        println!("{}", "-".repeat(60));
+        
+        for (physical_idx, track) in disk.tracks().iter().enumerate() {
+            // Logical track number is what the sectors claim (use first sector's track if available, otherwise track_number)
+            let logical_track = if let Some(first_sector) = track.sectors().first() {
+                first_sector.id.track
+            } else {
+                track.track_number
+            };
+            
             println!(
-                "  Track {:2}: {} sectors, {} bytes [{}]",
-                track.track_number,
-                track.sector_count(),
+                "{:<8} {:<8} {:<12} {:<8} {:<6} 0x{:02X}",
+                logical_track,
+                physical_idx,
                 track.total_data_size(),
-                sector_ids.join(", ")
+                track.sector_count(),
+                track.gap3_length,
+                track.filler_byte
             );
         }
     }
