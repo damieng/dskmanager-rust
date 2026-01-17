@@ -40,6 +40,8 @@ pub enum SectorStatus {
     Unformatted,
     /// Formatted but contains only the track filler byte
     FormattedFiller,
+    /// Formatted but contains only a single repeated byte (not the filler)
+    FormattedOddFiller,
     /// Formatted and contains data (in use)
     FormattedInUse,
 }
@@ -49,6 +51,7 @@ impl std::fmt::Display for SectorStatus {
         match self {
             SectorStatus::Unformatted => write!(f, "Unformatted"),
             SectorStatus::FormattedFiller => write!(f, "Filler"),
+            SectorStatus::FormattedOddFiller => write!(f, "Odd Filler"),
             SectorStatus::FormattedInUse => write!(f, "In Use"),
         }
     }
@@ -158,9 +161,16 @@ impl Sector {
             return SectorStatus::Unformatted;
         }
 
-        // Check if all bytes are filler
-        if self.data.iter().all(|&b| b == filler_byte) {
-            SectorStatus::FormattedFiller
+        // Check if all bytes are the same
+        let first_byte = self.data[0];
+        let all_same = self.data.iter().all(|&b| b == first_byte);
+        
+        if all_same {
+            if first_byte == filler_byte {
+                SectorStatus::FormattedFiller
+            } else {
+                SectorStatus::FormattedOddFiller
+            }
         } else {
             SectorStatus::FormattedInUse
         }
@@ -226,6 +236,14 @@ mod tests {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05];
         let sector = Sector::with_data(id, data);
         assert_eq!(sector.status(0xE5), SectorStatus::FormattedInUse);
+    }
+
+    #[test]
+    fn test_sector_status_odd_filler() {
+        let id = SectorId::new(0, 0, 1, 2);
+        let data = vec![0xFF; 512]; // All 0xFF, but filler is 0xE5
+        let sector = Sector::with_data(id, data);
+        assert_eq!(sector.status(0xE5), SectorStatus::FormattedOddFiller);
     }
 
     #[test]

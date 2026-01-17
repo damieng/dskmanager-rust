@@ -74,6 +74,8 @@ pub mod format;
 pub mod image;
 /// I/O operations for reading and writing DSK files
 pub mod io;
+/// Sector map visualization
+pub mod map;
 /// Copy protection detection
 pub mod protection;
 

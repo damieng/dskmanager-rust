@@ -29,6 +29,7 @@ impl CommandCompleter {
                 "help",
                 "info",
                 "load",
+                "map",
                 "open",
                 "quit",
                 "read-sector",
@@ -426,6 +427,19 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "map" => {
+                if let Some(ref img) = image {
+                    // Parse optional side argument
+                    let side: usize = if parts.len() >= 2 {
+                        parts[1].parse().unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    dskmanager::map::draw_sector_map(img, side);
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             _ => {
                 println!("Unknown command: {}. Type 'help' for available commands.", command);
             }
@@ -478,6 +492,7 @@ fn print_help() {
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
+    println!("  map [side]                     - Visual sector map (white=ok, red=error, yellow=deleted)");
     println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  help                           - Show this help");
     println!("  quit, exit                     - Exit the sandbox");
@@ -842,3 +857,4 @@ fn find_strings_in_track(
         }
     }
 }
+
