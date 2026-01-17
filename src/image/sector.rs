@@ -36,14 +36,22 @@ impl SectorId {
 /// Sector status classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectorStatus {
-    /// Unformatted - no data
+    /// Unformatted - data size is 0
     Unformatted,
-    /// Formatted but blank (all bytes equal to filler)
-    FormattedBlank,
-    /// Formatted with mixed data but not clearly in use
-    FormattedFilled,
-    /// Formatted and contains data indicating active use
+    /// Formatted but contains only the track filler byte
+    FormattedFiller,
+    /// Formatted and contains data (in use)
     FormattedInUse,
+}
+
+impl std::fmt::Display for SectorStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SectorStatus::Unformatted => write!(f, "Unformatted"),
+            SectorStatus::FormattedFiller => write!(f, "Filler"),
+            SectorStatus::FormattedInUse => write!(f, "In Use"),
+        }
+    }
 }
 
 /// A disk sector containing data and metadata
@@ -152,18 +160,9 @@ impl Sector {
 
         // Check if all bytes are filler
         if self.data.iter().all(|&b| b == filler_byte) {
-            return SectorStatus::FormattedBlank;
-        }
-
-        // Check for patterns indicating active use
-        // Simple heuristic: if there's a mix of values and not all E5/00/FF
-        let unique_bytes: std::collections::HashSet<u8> =
-            self.data.iter().copied().collect();
-
-        if unique_bytes.len() > 3 {
-            SectorStatus::FormattedInUse
+            SectorStatus::FormattedFiller
         } else {
-            SectorStatus::FormattedFilled
+            SectorStatus::FormattedInUse
         }
     }
 
@@ -218,7 +217,7 @@ mod tests {
     fn test_sector_status_blank() {
         let id = SectorId::new(0, 0, 1, 2);
         let sector = Sector::new(id);
-        assert_eq!(sector.status(0xE5), SectorStatus::FormattedBlank);
+        assert_eq!(sector.status(0xE5), SectorStatus::FormattedFiller);
     }
 
     #[test]

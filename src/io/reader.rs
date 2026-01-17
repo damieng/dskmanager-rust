@@ -164,24 +164,28 @@ fn read_track(file: &mut File, track_num: u8, side: u8, track_size: usize) -> Re
         let data_length = if sib.len() >= 8 {
             u16::from_le_bytes([sib[6], sib[7]])
         } else {
-            fdc_size_to_bytes(sector_size_code) as u16
+            fdc_size_to_stored_bytes(sector_size_code) as u16
         };
 
         // Calculate actual sector data size
+        // Use stored size rules when data_length is 0 (standard format fallback)
         let actual_size = if data_length > 0 {
             data_length as usize
         } else {
-            fdc_size_to_bytes(sector_size_code)
+            fdc_size_to_stored_bytes(sector_size_code)
         };
 
         // Extract sector data
         let sector_data = if sector_offset + actual_size <= track_data.len() {
             track_data[sector_offset..sector_offset + actual_size].to_vec()
-        } else {
-            // Not enough data, pad with filler
+        } else if sector_offset < track_data.len() {
+            // Partial data available, pad with filler
             let mut data = track_data[sector_offset..].to_vec();
             data.resize(actual_size, filler_byte);
             data
+        } else {
+            // No data available, fill entirely with filler byte
+            vec![filler_byte; actual_size]
         };
 
         sector_offset += actual_size;

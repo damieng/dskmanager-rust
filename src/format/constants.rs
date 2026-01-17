@@ -44,14 +44,47 @@ pub const FDC_SECTOR_SIZES: [usize; 9] = [
     32768,  // 8
 ];
 
+/// Maximum stored data size per sector in DSK format
+/// Size code 6 (8192) is truncated to 6144, size codes 7+ store nothing
+pub const MAX_STORED_SECTOR_SIZE: usize = 6144;
+
+/// FDC sector size code to stored byte size mapping for DSK format
+/// Index: size_code (0-8), Value: bytes actually stored in DSK file
+pub const FDC_STORED_SIZES: [usize; 9] = [
+    128,    // 0: full size
+    256,    // 1: full size
+    512,    // 2: full size
+    1024,   // 3: full size
+    2048,   // 4: full size
+    4096,   // 5: full size
+    6144,   // 6: truncated from 8192
+    0,      // 7: nothing stored
+    0,      // 8: nothing stored
+];
+
 /// Convert FDC size code to actual byte size
 #[inline]
 pub fn fdc_size_to_bytes(size_code: u8) -> usize {
     if size_code as usize >= FDC_SECTOR_SIZES.len() {
-        // Invalid size code, return default
-        512
+        // Invalid size code (9+), return 0
+        0
     } else {
         FDC_SECTOR_SIZES[size_code as usize]
+    }
+}
+
+/// Convert FDC size code to stored byte size in DSK format
+/// This accounts for DSK format limitations:
+/// - Size codes 0-5: full sector size stored
+/// - Size code 6: only 6144 of 8192 bytes stored
+/// - Size codes 7+: nothing stored
+#[inline]
+pub fn fdc_size_to_stored_bytes(size_code: u8) -> usize {
+    if size_code as usize >= FDC_STORED_SIZES.len() {
+        // Invalid size code (9+), nothing stored
+        0
+    } else {
+        FDC_STORED_SIZES[size_code as usize]
     }
 }
 
@@ -105,9 +138,9 @@ mod tests {
 
     #[test]
     fn test_fdc_size_to_bytes_invalid() {
-        // Invalid size codes should return default 512
-        assert_eq!(fdc_size_to_bytes(9), 512);
-        assert_eq!(fdc_size_to_bytes(255), 512);
+        // Invalid size codes (9+) should return 0
+        assert_eq!(fdc_size_to_bytes(9), 0);
+        assert_eq!(fdc_size_to_bytes(255), 0);
     }
 
     #[test]
@@ -123,6 +156,24 @@ mod tests {
     fn test_bytes_to_fdc_size_invalid() {
         assert_eq!(bytes_to_fdc_size(100), None);
         assert_eq!(bytes_to_fdc_size(1000), None);
+    }
+
+    #[test]
+    fn test_fdc_size_to_stored_bytes() {
+        // Size codes 0-5: full size stored
+        assert_eq!(fdc_size_to_stored_bytes(0), 128);
+        assert_eq!(fdc_size_to_stored_bytes(1), 256);
+        assert_eq!(fdc_size_to_stored_bytes(2), 512);
+        assert_eq!(fdc_size_to_stored_bytes(3), 1024);
+        assert_eq!(fdc_size_to_stored_bytes(4), 2048);
+        assert_eq!(fdc_size_to_stored_bytes(5), 4096);
+        // Size code 6: truncated to 6144
+        assert_eq!(fdc_size_to_stored_bytes(6), 6144);
+        // Size codes 7+: nothing stored
+        assert_eq!(fdc_size_to_stored_bytes(7), 0);
+        assert_eq!(fdc_size_to_stored_bytes(8), 0);
+        assert_eq!(fdc_size_to_stored_bytes(9), 0);
+        assert_eq!(fdc_size_to_stored_bytes(255), 0);
     }
 
     #[test]

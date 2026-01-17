@@ -507,9 +507,10 @@ fn list_tracks(image: &DskImage) {
                 .collect();
 
             println!(
-                "  Track {:2}: {} sectors [{}]",
+                "  Track {:2}: {} sectors, {} bytes [{}]",
                 track.track_number,
                 track.sector_count(),
+                track.total_data_size(),
                 sector_ids.join(", ")
             );
         }
@@ -520,24 +521,25 @@ fn list_sectors_on_track(image: &DskImage, side: u8, track: u8) {
     if let Some(disk) = image.disks().get(side as usize) {
         if let Some(track_data) = disk.get_track(track) {
             println!("=== Sectors on Side {}, Track {} ===", side, track);
-            println!("{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}", "Sector", "Track", "Side", "Size Code", "Size (bytes)", "Status");
-            println!("{}", "-".repeat(70));
+            println!(
+                "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
+                "Sector", "Track", "Side", "ID", "FDC Size", "FDC Flags", "Data Size", "Status"
+            );
+            println!("{}", "-".repeat(80));
 
-            for sector in track_data.sectors() {
-                let status = if sector.has_error() {
-                    "ERROR"
-                } else if sector.is_deleted() {
-                    "DELETED"
-                } else {
-                    "OK"
-                };
-
+            let filler = track_data.filler_byte;
+            for (idx, sector) in track_data.sectors().iter().enumerate() {
+                let fdc_size = format!("{} ({})", sector.id.size_code, sector.advertised_size());
+                let fdc_flags = format!("{},{}", sector.fdc_status1.0, sector.fdc_status2.0);
+                let status = sector.status(filler);
                 println!(
-                    "{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}",
-                    sector.id.sector,
+                    "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
+                    idx,
                     sector.id.track,
                     sector.id.side,
-                    sector.id.size_code,
+                    sector.id.sector,
+                    fdc_size,
+                    fdc_flags,
                     sector.actual_size(),
                     status
                 );
@@ -558,24 +560,25 @@ fn list_all_sectors(image: &DskImage) {
     for (side_idx, disk) in image.disks().iter().enumerate() {
         for track in disk.tracks() {
             println!("\n--- Side {}, Track {} ---", side_idx, track.track_number);
-            println!("{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}", "Sector", "Track", "Side", "Size Code", "Size (bytes)", "Status");
-            println!("{}", "-".repeat(70));
+            println!(
+                "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
+                "Sector", "Track", "Side", "ID", "FDC Size", "FDC Flags", "Data Size", "Status"
+            );
+            println!("{}", "-".repeat(80));
 
-            for sector in track.sectors() {
-                let status = if sector.has_error() {
-                    "ERROR"
-                } else if sector.is_deleted() {
-                    "DELETED"
-                } else {
-                    "OK"
-                };
-
+            let filler = track.filler_byte;
+            for (idx, sector) in track.sectors().iter().enumerate() {
+                let fdc_size = format!("{} ({})", sector.id.size_code, sector.advertised_size());
+                let fdc_flags = format!("{},{}", sector.fdc_status1.0, sector.fdc_status2.0);
+                let status = sector.status(filler);
                 println!(
-                    "{:<8} {:<8} {:<8} {:<12} {:<12} {:<8}",
-                    sector.id.sector,
+                    "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
+                    idx,
                     sector.id.track,
                     sector.id.side,
-                    sector.id.size_code,
+                    sector.id.sector,
+                    fdc_size,
+                    fdc_flags,
                     sector.actual_size(),
                     status
                 );

@@ -136,19 +136,23 @@ fn write_track(file: &mut File, track: &crate::image::Track, track_size: usize) 
         sib[4] = sector.fdc_status1.0;
         sib[5] = sector.fdc_status2.0;
 
+        // Calculate stored size based on DSK format rules
+        let max_stored = fdc_size_to_stored_bytes(sector.id.size_code);
+        let sector_data = sector.data();
+        let stored_len = sector_data.len().min(max_stored);
+
         // Write data length for extended format
-        let data_len_bytes = sector.data_length.to_le_bytes();
+        let data_len_bytes = (stored_len as u16).to_le_bytes();
         sib[6] = data_len_bytes[0];
         sib[7] = data_len_bytes[1];
 
-        // Copy sector data
-        let sector_data = sector.data();
-        let copy_len = sector_data.len().min(track_data.len() - sector_offset);
+        // Copy sector data (limited by DSK format stored size rules)
+        let copy_len = stored_len.min(track_data.len() - sector_offset);
         if copy_len > 0 {
             track_data[sector_offset..sector_offset + copy_len]
                 .copy_from_slice(&sector_data[..copy_len]);
         }
-        sector_offset += sector_data.len();
+        sector_offset += stored_len;
     }
 
     file.write_all(&track_data)?;
@@ -156,10 +160,12 @@ fn write_track(file: &mut File, track: &crate::image::Track, track_size: usize) 
 }
 
 /// Calculate the size of a track in bytes (including track info block)
+/// Uses DSK format stored size rules (max 6144 bytes per sector)
 fn calculate_single_track_size(track: &crate::image::Track) -> usize {
     let mut size = TRACK_INFO_BLOCK_SIZE;
     for sector in track.sectors() {
-        size += sector.actual_size();
+        let max_stored = fdc_size_to_stored_bytes(sector.id.size_code);
+        size += sector.actual_size().min(max_stored);
     }
     size
 }
