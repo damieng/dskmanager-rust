@@ -86,6 +86,7 @@ pub use filesystem::{
     CpmFileSystem, DirEntry, ExtendedDirEntry, FileAttributes, FileHeader, FileSystem,
     FileSystemInfo, HeaderType,
 };
+pub use filesystem::try_parse_header;
 pub use format::{
     AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification, DskFormat,
     FormatSpec, SideMode,

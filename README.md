@@ -126,6 +126,7 @@ Available commands:
 - `fs-mount` - Mount CP/M filesystem
 - `fs-list` - List files on CP/M filesystem
 - `fs-read <filename>` - Read file from CP/M filesystem
+- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips AMSDOS/PLUS3DOS headers by default, use `raw` to preserve)
 - `detect-protection` - Detect copy protection schemes on the disk
 - `disassemble [track] [sector]` - Disassemble Z80 code from a sector
 - `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)

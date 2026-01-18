@@ -335,25 +335,58 @@ fn main() {
             "fs-export" => {
                 if let Some(ref img) = image {
                     if parts.len() < 2 {
-                        println!("Usage: fs-export <filename> [output_path]");
+                        println!("Usage: fs-export <filename> [output_path] [raw]");
+                        println!("  By default, AMSDOS and PLUS3DOS headers are stripped.");
+                        println!("  Use 'raw' option to preserve headers.");
                         continue;
                     }
                     let src_filename = &parts[1];
+                    // Parse arguments: filename [output_path] [raw]
+                    let mut output_path = None;
+                    let mut raw_mode = false;
+                    
+                    for arg in parts.iter().skip(2) {
+                        if arg.to_lowercase() == "raw" {
+                            raw_mode = true;
+                        } else if output_path.is_none() {
+                            output_path = Some(arg.clone());
+                        }
+                    }
+                    
                     // If no output path specified, use the source filename
-                    let output_path = if parts.len() >= 3 {
-                        parts[2].clone()
-                    } else {
-                        src_filename.clone()
-                    };
+                    let output_path = output_path.unwrap_or_else(|| src_filename.clone());
 
                     match CpmFileSystem::from_image(img) {
                         Ok(fs) => {
                             match fs.read_file(src_filename) {
-                                Ok(data) => {
+                                Ok(mut data) => {
+                                    let original_size = data.len();
+                                    let header = try_parse_header(&data);
+                                    
+                                    // Strip header if not in raw mode and header is detected
+                                    if !raw_mode && header.header_size > 0 {
+                                        match header.header_type {
+                                            HeaderType::Amsdos | HeaderType::Plus3dos => {
+                                                // Strip the header
+                                                if data.len() >= header.header_size {
+                                                    data.drain(0..header.header_size);
+                                                    println!("Stripped {} header ({} bytes)", 
+                                                        header.header_type, header.header_size);
+                                                }
+                                            }
+                                            HeaderType::None => {}
+                                        }
+                                    }
+
                                     match std::fs::write(&output_path, &data) {
                                         Ok(_) => {
-                                            println!("Exported {} ({} bytes) to {}",
-                                                src_filename, data.len(), output_path);
+                                            if raw_mode {
+                                                println!("Exported {} ({} bytes, raw) to {}",
+                                                    src_filename, original_size, output_path);
+                                            } else {
+                                                println!("Exported {} ({} bytes) to {}",
+                                                    src_filename, data.len(), output_path);
+                                            }
                                         }
                                         Err(e) => println!("Error writing file: {}", e),
                                     }
@@ -570,7 +603,8 @@ fn print_help() {
     println!("  fs-mount                       - Mount CP/M filesystem");
     println!("  fs-list                        - List files on CP/M filesystem");
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
-    println!("  fs-export <file> [output]      - Export file from disk to host filesystem");
+    println!("  fs-export <file> [output] [raw] - Export file from disk to host filesystem");
+    println!("                                    (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
