@@ -1,6 +1,7 @@
 /// Interactive DSK console application
 
 use dez80::Instruction;
+
 use dskmanager::*;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -248,18 +249,21 @@ fn main() {
                 if let Some(ref img) = image {
                     match CpmFileSystem::from_image(img) {
                         Ok(fs) => {
-                            match fs.read_dir_extended() {
+                            match fs.read_dir_extended_with_deleted() {
                                 Ok(entries) => {
                                     if entries.is_empty() {
                                         println!("No files found.");
                                     } else {
+                                        // Always show all columns including Usr and Del
                                         println!(
-                                            "{:<14} {:>3} {:>3} {:>6} {:>8} {:>8} {:>3} {:<8} {:>4} {}",
-                                            "Name", "Idx", "Blk", "Alloc", "Size", "Length", "Att",
-                                            "Header", "Chk", "Meta"
+                                            "{:<14} {:>3} {:>3} {:>4} {:>5} {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
+                                            "Name", "Idx", "Usr", "Blks", "Alloc", "Size", "Length", "Att", "Del", "Header", "Chk", "Meta"
                                         );
-                                        println!("{}", "-".repeat(90));
+                                        println!("{}", "-".repeat(96));
+                                        
                                         for entry in entries {
+                                            let is_deleted = entry.user == 0xE5;
+                                            let user_display = if is_deleted { "E5".to_string() } else { format!("{}", entry.user) };
                                             let attrs = format!(
                                                 "{}{}{}",
                                                 if entry.attributes.read_only { "R" } else { "-" },
@@ -278,15 +282,18 @@ fn main() {
                                             } else {
                                                 String::new()
                                             };
+                                            
                                             println!(
-                                                "{:<14} {:>3} {:>3} {:>5}K {:>8} {:>8} {:>3} {:<8} {:>4} {}",
+                                                "{:<14} {:>3} {:>3} {:>4} {:>4}K {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
                                                 entry.name,
                                                 entry.index,
+                                                user_display,
                                                 entry.blocks,
                                                 entry.allocated / 1024,
                                                 entry.size,
                                                 data_size,
                                                 attrs,
+                                                if is_deleted { "Yes" } else { "" },
                                                 header_type,
                                                 checksum,
                                                 entry.header.meta

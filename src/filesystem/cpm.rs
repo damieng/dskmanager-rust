@@ -26,16 +26,33 @@ struct CpmDirEntry {
 }
 
 impl CpmDirEntry {
-    /// Parse a directory entry from 32 bytes
+    /// Parse a directory entry from 32 bytes (excludes deleted entries and volume labels)
     fn parse(data: &[u8], index: usize) -> Option<Self> {
+        Self::parse_internal(data, index, false)
+    }
+
+    /// Parse a directory entry from 32 bytes, optionally including deleted entries
+    fn parse_internal(data: &[u8], index: usize, include_deleted: bool) -> Option<Self> {
         if data.len() < 32 {
             return None;
         }
 
         let user = data[0];
 
-        // Skip deleted entries (0xE5) and label entries (0x20)
-        if user == 0xE5 || user >= 0x20 {
+        // Skip volume label entries (0x20)
+        if user == 0x20 {
+            return None;
+        }
+
+        // Skip deleted entries (0xE5) unless explicitly requested
+        if !include_deleted && user == 0xE5 {
+            return None;
+        }
+
+        // Valid user numbers are 0-31 (0x00-0x1F) for normal files, or 0xE5 for deleted files
+        // Some extended CP/M implementations support user numbers up to 31
+        // We allow 0-31 and 0xE5 (when include_deleted is true)
+        if user > 0x1F && user != 0xE5 {
             return None;
         }
 
@@ -62,6 +79,17 @@ impl CpmDirEntry {
             record_count,
             allocation,
         })
+    }
+
+    /// Parse a directory entry including deleted entries (user 0xE5)
+    fn parse_with_deleted(data: &[u8], index: usize) -> Option<Self> {
+        Self::parse_internal(data, index, true)
+    }
+
+    /// Check if this entry is deleted (user == 0xE5)
+    #[allow(dead_code)]
+    fn is_deleted(&self) -> bool {
+        self.user == 0xE5
     }
 
     /// Get the full filename as a string (strips high bits used for attributes)
@@ -131,6 +159,66 @@ impl CpmDirEntry {
             records * 128
         }
     }
+
+    /// Extract allocation blocks from this directory entry
+    fn extract_blocks_for_validation(&self, spec: &DiskSpecification) -> Vec<u16> {
+        let mut blocks = Vec::new();
+
+        // Use allocation size from specification (8-bit or 16-bit block numbers)
+        match spec.allocation_size {
+            AllocationSize::Byte => {
+                // 8-bit allocation numbers (16 entries)
+                for &block in &self.allocation {
+                    if block != 0 {
+                        blocks.push(block as u16);
+                    }
+                }
+            }
+            AllocationSize::Word => {
+                // 16-bit allocation numbers (8 entries)
+                for i in (0..self.allocation.len()).step_by(2) {
+                    if i + 1 < self.allocation.len() {
+                        let block =
+                            u16::from_le_bytes([self.allocation[i], self.allocation[i + 1]]);
+                        if block != 0 {
+                            blocks.push(block);
+                        }
+                    }
+                }
+            }
+        }
+
+        blocks
+    }
+
+    /// Validate that this entry has valid block allocations
+    /// Returns true if the entry is valid, false if it should be pruned
+    fn is_valid(&self, spec: &DiskSpecification) -> bool {
+        let blocks = self.extract_blocks_for_validation(spec);
+        let max_block = spec.block_count();
+
+        // If max_block is 0, the spec is invalid - skip validation
+        if max_block == 0 {
+            return true;
+        }
+
+        // Check that all block numbers are within valid range
+        // Block numbers should be 1-based (0 is unused/invalid)
+        for &block_num in &blocks {
+            if block_num == 0 || block_num > max_block {
+                return false;
+            }
+        }
+
+        // Check that we're not allocating more blocks than exist on the disk
+        // This is a sanity check - a single file shouldn't allocate all blocks
+        // (though technically possible, it's highly suspicious)
+        if blocks.len() as u16 > max_block {
+            return false;
+        }
+
+        true
+    }
 }
 
 /// CP/M filesystem implementation using disk specification
@@ -154,6 +242,15 @@ impl<'a> CpmFileSystem<'a> {
 
     /// Read the directory entries from the disk
     fn read_directory(image: &DskImage, spec: &DiskSpecification) -> Result<Vec<CpmDirEntry>> {
+        Self::read_directory_internal(image, spec, false)
+    }
+
+    /// Read the directory entries from the disk, optionally including deleted entries
+    fn read_directory_internal(
+        image: &DskImage,
+        spec: &DiskSpecification,
+        include_deleted: bool,
+    ) -> Result<Vec<CpmDirEntry>> {
         let mut entries = Vec::new();
 
         // Calculate max directory entries from specification
@@ -167,8 +264,16 @@ impl<'a> CpmFileSystem<'a> {
             if chunk.len() < 32 {
                 break;
             }
-            if let Some(entry) = CpmDirEntry::parse(chunk, index) {
-                entries.push(entry);
+            let entry = if include_deleted {
+                CpmDirEntry::parse_with_deleted(chunk, index)
+            } else {
+                CpmDirEntry::parse(chunk, index)
+            };
+            if let Some(entry) = entry {
+                // Validate entry and prune invalid ones
+                if entry.is_valid(spec) {
+                    entries.push(entry);
+                }
             }
         }
 
@@ -220,9 +325,14 @@ impl<'a> CpmFileSystem<'a> {
 
     /// Merge extents for files that span multiple directory entries
     fn merge_extents(&self) -> HashMap<String, Vec<&CpmDirEntry>> {
+        Self::merge_extents_from_entries(&self.directory_entries)
+    }
+
+    /// Merge extents from a slice of directory entries
+    fn merge_extents_from_entries(entries: &[CpmDirEntry]) -> HashMap<String, Vec<&CpmDirEntry>> {
         let mut files: HashMap<String, Vec<&CpmDirEntry>> = HashMap::new();
 
-        for entry in &self.directory_entries {
+        for entry in entries {
             let filename = entry.filename_str();
             files.entry(filename).or_default().push(entry);
         }
@@ -353,7 +463,21 @@ impl<'a> CpmFileSystem<'a> {
 
     /// List directory entries with extended information including headers
     pub fn read_dir_extended(&self) -> Result<Vec<ExtendedDirEntry>> {
-        let files = self.merge_extents();
+        self.read_dir_extended_internal(false)
+    }
+
+    /// List directory entries with extended information, optionally including deleted files
+    pub fn read_dir_extended_with_deleted(&self) -> Result<Vec<ExtendedDirEntry>> {
+        self.read_dir_extended_internal(true)
+    }
+
+    /// Internal method to list directory entries with extended information
+    fn read_dir_extended_internal(&self, include_deleted: bool) -> Result<Vec<ExtendedDirEntry>> {
+        // Read directory entries (with or without deleted)
+        let dir_entries = Self::read_directory_internal(self.image, &self.spec, include_deleted)?;
+        
+        // Merge extents from the directory entries
+        let files = Self::merge_extents_from_entries(&dir_entries);
         let mut entries = Vec::new();
         let block_size = self.spec.block_size();
 
