@@ -2,60 +2,9 @@
 
 use crate::error::{DskError, Result};
 use crate::filesystem::{DirEntry, FileAttributes, FileSystem, FileSystemInfo};
+use crate::format::{AllocationSize, DiskSpecification};
 use crate::image::DskImage;
 use std::collections::HashMap;
-
-/// CP/M Disk Parameter Block
-#[derive(Debug, Clone)]
-pub struct DiskParameterBlock {
-    /// Sectors per track
-    pub sectors_per_track: u16,
-    /// Block shift (3=1024, 4=2048, 5=4096)
-    pub block_shift: u8,
-    /// Block mask
-    pub block_mask: u8,
-    /// Extent mask
-    pub extent_mask: u8,
-    /// Maximum allocation blocks (DSM)
-    pub max_blocks: u16,
-    /// Maximum directory entries (DRM)
-    pub max_dir_entries: u16,
-    /// Number of reserved tracks
-    pub reserved_tracks: u8,
-}
-
-impl DiskParameterBlock {
-    /// Get the block size in bytes
-    pub fn block_size(&self) -> usize {
-        128 << self.block_shift
-    }
-
-    /// CP/M format for Amstrad CPC Data format
-    pub fn amstrad_data() -> Self {
-        Self {
-            sectors_per_track: 9,
-            block_shift: 3,      // 1024 bytes
-            block_mask: 7,
-            extent_mask: 0,
-            max_blocks: 179,     // 180 KB / 1024
-            max_dir_entries: 63,
-            reserved_tracks: 0,
-        }
-    }
-
-    /// CP/M format for Spectrum +3
-    pub fn spectrum_plus3() -> Self {
-        Self {
-            sectors_per_track: 9,
-            block_shift: 3,      // 1024 bytes
-            block_mask: 7,
-            extent_mask: 0,
-            max_blocks: 179,
-            max_dir_entries: 63,
-            reserved_tracks: 1,  // Boot track
-        }
-    }
-}
 
 /// CP/M directory entry (32 bytes)
 #[derive(Debug, Clone)]
@@ -65,7 +14,7 @@ struct CpmDirEntry {
     extension: [u8; 3],
     extent_low: u8,
     #[allow(dead_code)]
-    reserved1: u8,
+    bytes_in_last_record: u8,
     extent_high: u8,
     record_count: u8,
     allocation: Vec<u8>,
@@ -80,8 +29,8 @@ impl CpmDirEntry {
 
         let user = data[0];
 
-        // Skip deleted entries (0xE5)
-        if user == 0xE5 {
+        // Skip deleted entries (0xE5) and label entries (0x20)
+        if user == 0xE5 || user >= 0x20 {
             return None;
         }
 
@@ -91,7 +40,7 @@ impl CpmDirEntry {
         extension.copy_from_slice(&data[9..12]);
 
         let extent_low = data[12];
-        let reserved1 = data[13];
+        let bytes_in_last_record = data[13];
         let extent_high = data[14];
         let record_count = data[15];
 
@@ -102,21 +51,25 @@ impl CpmDirEntry {
             filename,
             extension,
             extent_low,
-            reserved1,
+            bytes_in_last_record,
             extent_high,
             record_count,
             allocation,
         })
     }
 
-    /// Get the full filename as a string
+    /// Get the full filename as a string (strips high bits used for attributes)
     fn filename_str(&self) -> String {
-        let name = String::from_utf8_lossy(&self.filename)
+        // Strip high bits (attribute flags) from filename and extension
+        let clean_filename: Vec<u8> = self.filename.iter().map(|&b| b & 0x7F).collect();
+        let clean_extension: Vec<u8> = self.extension.iter().map(|&b| b & 0x7F).collect();
+
+        let name = String::from_utf8_lossy(&clean_filename)
             .trim_end()
             .replace('\0', " ")
             .trim()
             .to_string();
-        let ext = String::from_utf8_lossy(&self.extension)
+        let ext = String::from_utf8_lossy(&clean_extension)
             .trim_end()
             .replace('\0', " ")
             .trim()
@@ -129,17 +82,17 @@ impl CpmDirEntry {
         }
     }
 
-    /// Check if read-only attribute is set
+    /// Check if read-only attribute is set (high bit of first extension byte)
     fn is_read_only(&self) -> bool {
-        (self.filename[0] & 0x80) != 0
+        (self.extension[0] & 0x80) != 0
     }
 
-    /// Check if system attribute is set
+    /// Check if system attribute is set (high bit of second extension byte)
     fn is_system(&self) -> bool {
-        (self.filename[1] & 0x80) != 0
+        (self.extension[1] & 0x80) != 0
     }
 
-    /// Check if archive attribute is set
+    /// Check if archive attribute is set (high bit of third extension byte)
     fn is_archive(&self) -> bool {
         (self.extension[2] & 0x80) != 0
     }
@@ -153,64 +106,61 @@ impl CpmDirEntry {
         }
     }
 
-    /// Get the extent number
+    /// Get the extent number (combines low and high bytes)
     fn extent_number(&self) -> u16 {
-        ((self.extent_high as u16) << 8) | (self.extent_low as u16)
+        ((self.extent_high as u16) << 5) | ((self.extent_low as u16) & 0x1F)
+    }
+
+    /// Calculate the size from this extent's record count
+    fn extent_size(&self, bytes_in_last: u8) -> usize {
+        let records = self.record_count as usize;
+        if records == 0 {
+            return 0;
+        }
+
+        if bytes_in_last > 0 {
+            // Last record is partial
+            (records - 1) * 128 + bytes_in_last as usize
+        } else {
+            records * 128
+        }
     }
 }
 
-/// CP/M filesystem implementation
+/// CP/M filesystem implementation using disk specification
 pub struct CpmFileSystem<'a> {
     image: &'a DskImage,
-    dpb: DiskParameterBlock,
+    spec: DiskSpecification,
     directory_entries: Vec<CpmDirEntry>,
 }
 
 impl<'a> CpmFileSystem<'a> {
-    /// Create a new CP/M filesystem from an image
-    pub fn new(image: &'a DskImage, dpb: DiskParameterBlock) -> Result<Self> {
-        let directory_entries = Self::read_directory(image, &dpb)?;
+    /// Create a new CP/M filesystem from an image using a detected specification
+    pub fn new(image: &'a DskImage, spec: DiskSpecification) -> Result<Self> {
+        let directory_entries = Self::read_directory(image, &spec)?;
 
         Ok(Self {
             image,
-            dpb,
+            spec,
             directory_entries,
         })
     }
 
     /// Read the directory entries from the disk
-    fn read_directory(image: &DskImage, dpb: &DiskParameterBlock) -> Result<Vec<CpmDirEntry>> {
+    fn read_directory(image: &DskImage, spec: &DiskSpecification) -> Result<Vec<CpmDirEntry>> {
         let mut entries = Vec::new();
 
-        // Directory starts after reserved tracks
-        let dir_track_start = dpb.reserved_tracks;
+        // Calculate max directory entries from specification
+        let max_entries = spec.directory_entries();
 
-        // Calculate how many sectors are needed for directory
-        let dir_size_bytes = (dpb.max_dir_entries as usize + 1) * 32;
-        let sector_size = image.spec().sector_size as usize;
-        let dir_sectors = (dir_size_bytes + sector_size - 1) / sector_size;
-
-        let mut dir_data = Vec::new();
-
-        // Read directory sectors
-        let mut sectors_read = 0;
-        'outer: for track_num in dir_track_start..image.spec().num_tracks {
-            if let Some(disk) = image.get_disk(0) {
-                if let Some(track) = disk.get_track(track_num) {
-                    for sector in track.sectors() {
-                        dir_data.extend_from_slice(sector.data());
-                        sectors_read += 1;
-
-                        if sectors_read >= dir_sectors {
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
+        // Read directory data starting from the first sector after reserved tracks
+        let dir_data = Self::read_directory_data(image, spec, max_entries)?;
 
         // Parse directory entries (32 bytes each)
         for chunk in dir_data.chunks(32) {
+            if chunk.len() < 32 {
+                break;
+            }
             if let Some(entry) = CpmDirEntry::parse(chunk) {
                 entries.push(entry);
             }
@@ -219,13 +169,56 @@ impl<'a> CpmFileSystem<'a> {
         Ok(entries)
     }
 
+    /// Read raw directory data from disk
+    fn read_directory_data(
+        image: &DskImage,
+        spec: &DiskSpecification,
+        max_entries: usize,
+    ) -> Result<Vec<u8>> {
+        let dir_size_bytes = max_entries * 32;
+        let mut dir_data = Vec::with_capacity(dir_size_bytes);
+
+        // Directory starts at the first sector of the first track after reserved tracks
+        let start_track = spec.reserved_tracks;
+
+        // Read sectors in logical order (by sector ID) starting from reserved_tracks
+        let disk = image.get_disk(0).ok_or_else(|| DskError::filesystem("No disk side 0"))?;
+
+        let mut bytes_read = 0;
+        for track_num in start_track..spec.tracks_per_side {
+            let track = match disk.get_track(track_num) {
+                Some(t) => t,
+                None => continue,
+            };
+
+            // Get sectors sorted by ID (logical order)
+            let mut sector_ids: Vec<u8> = track.sectors().iter().map(|s| s.id.sector).collect();
+            sector_ids.sort();
+
+            for sector_id in sector_ids {
+                if let Some(sector) = track.get_sector(sector_id) {
+                    let data = sector.data();
+                    let to_copy = (dir_size_bytes - bytes_read).min(data.len());
+                    dir_data.extend_from_slice(&data[..to_copy]);
+                    bytes_read += to_copy;
+
+                    if bytes_read >= dir_size_bytes {
+                        return Ok(dir_data);
+                    }
+                }
+            }
+        }
+
+        Ok(dir_data)
+    }
+
     /// Merge extents for files that span multiple directory entries
     fn merge_extents(&self) -> HashMap<String, Vec<&CpmDirEntry>> {
         let mut files: HashMap<String, Vec<&CpmDirEntry>> = HashMap::new();
 
         for entry in &self.directory_entries {
             let filename = entry.filename_str();
-            files.entry(filename).or_insert_with(Vec::new).push(entry);
+            files.entry(filename).or_default().push(entry);
         }
 
         // Sort extents by extent number
@@ -236,37 +229,69 @@ impl<'a> CpmFileSystem<'a> {
         files
     }
 
+    /// Convert a block number to a logical sector number (accounting for reserved tracks)
+    fn block_to_sector(&self, block_num: u16) -> usize {
+        let block_size = self.spec.block_size();
+        let sector_size = self.spec.sector_size as usize;
+        let sectors_per_block = block_size / sector_size;
+        let sectors_per_track = self.spec.sectors_per_track as usize;
+
+        // Blocks start after reserved tracks
+        let reserved_sectors = self.spec.reserved_tracks as usize * sectors_per_track;
+
+        // Calculate the absolute sector number
+        (block_num as usize) * sectors_per_block + reserved_sectors
+    }
+
     /// Read data from allocation blocks
     fn read_blocks(&self, blocks: &[u16]) -> Result<Vec<u8>> {
-        let block_size = self.dpb.block_size();
-        let sector_size = self.image.spec().sector_size as usize;
+        let block_size = self.spec.block_size();
+        let sector_size = self.spec.sector_size as usize;
         let sectors_per_block = block_size / sector_size;
+        let sectors_per_track = self.spec.sectors_per_track as usize;
 
         let mut data = Vec::new();
 
+        let disk = self
+            .image
+            .get_disk(0)
+            .ok_or_else(|| DskError::filesystem("No disk side 0"))?;
+
         for &block_num in blocks {
-            if block_num == 0 || block_num > self.dpb.max_blocks {
+            if block_num == 0 {
                 continue;
             }
 
-            // Calculate which track and sector this block starts at
-            let block_sector = (block_num as usize) * sectors_per_block;
-            let reserved_sectors = self.dpb.reserved_tracks as usize * self.dpb.sectors_per_track as usize;
-            let absolute_sector = block_sector + reserved_sectors;
+            // Convert block to starting sector
+            let start_sector = self.block_to_sector(block_num);
 
-            // Read sectors for this block
+            // Read all sectors for this block
             for i in 0..sectors_per_block {
-                let sector_num = absolute_sector + i;
-                let track = sector_num / self.dpb.sectors_per_track as usize;
-                let sector_in_track = sector_num % self.dpb.sectors_per_track as usize;
+                let absolute_sector = start_sector + i;
+                let track_num = absolute_sector / sectors_per_track;
+                let sector_in_track = absolute_sector % sectors_per_track;
 
-                if let Some(disk) = self.image.get_disk(0) {
-                    if let Some(track_obj) = disk.get_track(track as u8) {
-                        // Find sector by index
-                        if let Some(sector) = track_obj.get_sector_by_index(sector_in_track) {
+                if let Some(track) = disk.get_track(track_num as u8) {
+                    // Get sectors sorted by ID and pick the nth one
+                    let mut sector_ids: Vec<u8> =
+                        track.sectors().iter().map(|s| s.id.sector).collect();
+                    sector_ids.sort();
+
+                    if sector_in_track < sector_ids.len() {
+                        let sector_id = sector_ids[sector_in_track];
+                        if let Some(sector) = track.get_sector(sector_id) {
                             data.extend_from_slice(sector.data());
+                        } else {
+                            // Sector not found, pad with zeros
+                            data.extend(std::iter::repeat(0).take(sector_size));
                         }
+                    } else {
+                        // Not enough sectors, pad with zeros
+                        data.extend(std::iter::repeat(0).take(sector_size));
                     }
+                } else {
+                    // Track not found, pad with zeros
+                    data.extend(std::iter::repeat(0).take(sector_size));
                 }
             }
         }
@@ -278,21 +303,25 @@ impl<'a> CpmFileSystem<'a> {
     fn extract_blocks(&self, entry: &CpmDirEntry) -> Vec<u16> {
         let mut blocks = Vec::new();
 
-        // CP/M uses either 8-bit or 16-bit allocation numbers depending on disk size
-        if self.dpb.max_blocks < 256 {
-            // 8-bit allocation numbers
-            for &block in &entry.allocation {
-                if block != 0 {
-                    blocks.push(block as u16);
+        // Use allocation size from specification (8-bit or 16-bit block numbers)
+        match self.spec.allocation_size {
+            AllocationSize::Byte => {
+                // 8-bit allocation numbers (16 entries)
+                for &block in &entry.allocation {
+                    if block != 0 {
+                        blocks.push(block as u16);
+                    }
                 }
             }
-        } else {
-            // 16-bit allocation numbers
-            for i in (0..entry.allocation.len()).step_by(2) {
-                if i + 1 < entry.allocation.len() {
-                    let block = u16::from_le_bytes([entry.allocation[i], entry.allocation[i + 1]]);
-                    if block != 0 {
-                        blocks.push(block);
+            AllocationSize::Word => {
+                // 16-bit allocation numbers (8 entries)
+                for i in (0..entry.allocation.len()).step_by(2) {
+                    if i + 1 < entry.allocation.len() {
+                        let block =
+                            u16::from_le_bytes([entry.allocation[i], entry.allocation[i + 1]]);
+                        if block != 0 {
+                            blocks.push(block);
+                        }
                     }
                 }
             }
@@ -300,29 +329,45 @@ impl<'a> CpmFileSystem<'a> {
 
         blocks
     }
+
+    /// Get the disk specification
+    pub fn specification(&self) -> &DiskSpecification {
+        &self.spec
+    }
 }
 
 impl CpmFileSystem<'_> {
-    /// Create a CP/M filesystem from an image
-    pub fn from_image<'a>(image: &'a DskImage) -> Result<CpmFileSystem<'a>> {
-        // Try to detect format from disk spec
-        let dpb = if image.spec().sector_size == 512 && image.spec().sectors_per_track == 9 {
-            DiskParameterBlock::spectrum_plus3()
-        } else {
-            DiskParameterBlock::amstrad_data()
-        };
+    /// Create a CP/M filesystem from an image, auto-detecting the specification
+    pub fn from_image(image: &DskImage) -> Result<CpmFileSystem<'_>> {
+        // Use DiskSpecification to detect the disk format
+        let spec = DiskSpecification::identify(image);
 
-        CpmFileSystem::new(image, dpb)
+        // Validate the specification
+        if spec.sector_size == 0 || spec.sectors_per_track == 0 {
+            return Err(DskError::filesystem("Invalid disk specification"));
+        }
+
+        CpmFileSystem::new(image, spec)
     }
 }
 
 impl<'a> FileSystem for CpmFileSystem<'a> {
-    fn from_image<'b>(_image: &'b DskImage) -> Result<Self> where Self: Sized {
-        Err(DskError::filesystem("Use CpmFileSystem::from_image() directly"))
+    fn from_image<'b>(_image: &'b DskImage) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(DskError::filesystem(
+            "Use CpmFileSystem::from_image() directly",
+        ))
     }
 
-    fn from_image_mut<'b>(_image: &'b mut DskImage) -> Result<Self> where Self: Sized {
-        Err(DskError::filesystem("Mutable CP/M filesystem not yet implemented"))
+    fn from_image_mut<'b>(_image: &'b mut DskImage) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(DskError::filesystem(
+            "Mutable CP/M filesystem not yet implemented",
+        ))
     }
 
     fn read_dir(&self) -> Result<Vec<DirEntry>> {
@@ -336,11 +381,17 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
 
             let first_extent = extents[0];
 
-            // Calculate total file size
+            // Calculate total file size from all extents
             let mut total_size = 0;
-            for extent in &extents {
-                // Each record is 128 bytes
-                total_size += extent.record_count as usize * 128;
+            for (i, extent) in extents.iter().enumerate() {
+                let is_last = i == extents.len() - 1;
+                if is_last {
+                    // Last extent may have partial last record
+                    total_size += extent.extent_size(extent.bytes_in_last_record);
+                } else {
+                    // Full extent
+                    total_size += extent.record_count as usize * 128;
+                }
             }
 
             entries.push(DirEntry {
@@ -380,8 +431,13 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
 
         // Trim to actual file size
         let mut actual_size = 0;
-        for extent in extents {
-            actual_size += extent.record_count as usize * 128;
+        for (i, extent) in extents.iter().enumerate() {
+            let is_last = i == extents.len() - 1;
+            if is_last {
+                actual_size += extent.extent_size(extent.bytes_in_last_record);
+            } else {
+                actual_size += extent.record_count as usize * 128;
+            }
         }
 
         if file_data.len() > actual_size {
@@ -400,7 +456,7 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
     }
 
     fn info(&self) -> FileSystemInfo {
-        let total_blocks = self.dpb.max_blocks as usize + 1;
+        let total_blocks = self.spec.block_count() as usize;
 
         // Calculate used blocks
         let mut used_blocks = 0;
@@ -409,11 +465,14 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
             used_blocks += blocks.len();
         }
 
+        // Account for directory blocks
+        let dir_blocks = self.spec.directory_blocks as usize;
+
         FileSystemInfo {
-            fs_type: "CP/M".to_string(),
+            fs_type: format!("CP/M ({})", self.spec.format),
             total_blocks,
-            free_blocks: total_blocks.saturating_sub(used_blocks),
-            block_size: self.dpb.block_size(),
+            free_blocks: total_blocks.saturating_sub(used_blocks + dir_blocks),
+            block_size: self.spec.block_size(),
         }
     }
 }
@@ -421,12 +480,6 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_dpb_block_size() {
-        let dpb = DiskParameterBlock::amstrad_data();
-        assert_eq!(dpb.block_size(), 1024);
-    }
 
     #[test]
     fn test_parse_dir_entry() {
@@ -450,5 +503,36 @@ mod tests {
 
         let entry = CpmDirEntry::parse(&data);
         assert!(entry.is_none());
+    }
+
+    #[test]
+    fn test_filename_with_attributes() {
+        let mut data = [0u8; 32];
+        data[0] = 0; // User 0
+        data[1..9].copy_from_slice(b"TESTFILE");
+        // Extension with high bits set (attributes)
+        data[9] = b'T' | 0x80; // Read-only
+        data[10] = b'X' | 0x80; // System
+        data[11] = b'T' | 0x80; // Archive
+
+        let entry = CpmDirEntry::parse(&data).unwrap();
+        assert_eq!(entry.filename_str(), "TESTFILE.TXT");
+        assert!(entry.is_read_only());
+        assert!(entry.is_system());
+        assert!(entry.is_archive());
+    }
+
+    #[test]
+    fn test_extent_number() {
+        let mut data = [0u8; 32];
+        data[0] = 0;
+        data[1..9].copy_from_slice(b"TEST    ");
+        data[9..12].copy_from_slice(b"   ");
+        data[12] = 3; // Extent low
+        data[14] = 1; // Extent high
+
+        let entry = CpmDirEntry::parse(&data).unwrap();
+        // Extent number = (high << 5) | (low & 0x1F) = (1 << 5) | 3 = 35
+        assert_eq!(entry.extent_number(), 35);
     }
 }
