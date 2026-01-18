@@ -255,7 +255,7 @@ fn main() {
                                     } else {
                                         println!(
                                             "{:<14} {:>3} {:>3} {:>6} {:>8} {:>8} {:>3} {:<8} {:>4} {}",
-                                            "Name", "Idx", "Blk", "Alloc", "Size", "HdrSize", "Att",
+                                            "Name", "Idx", "Blk", "Alloc", "Size", "Length", "Att",
                                             "Header", "Chk", "Meta"
                                         );
                                         println!("{}", "-".repeat(90));
@@ -272,8 +272,9 @@ fn main() {
                                             } else {
                                                 ""
                                             };
-                                            let header_size = if entry.header.header_type != HeaderType::None {
-                                                format!("{}", entry.header.file_size)
+                                            let data_size = if entry.header.header_type != HeaderType::None {
+                                                let data = entry.header.file_size.saturating_sub(entry.header.header_size);
+                                                format!("{}", data)
                                             } else {
                                                 String::new()
                                             };
@@ -284,7 +285,7 @@ fn main() {
                                                 entry.blocks,
                                                 entry.allocated / 1024,
                                                 entry.size,
-                                                header_size,
+                                                data_size,
                                                 attrs,
                                                 header_type,
                                                 checksum,
