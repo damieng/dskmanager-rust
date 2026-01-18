@@ -4,9 +4,14 @@
 pub mod constants;
 /// Format specification types
 pub mod spec;
+/// Disk specification for CP/M filesystems
+pub mod specification;
 
 pub use constants::*;
 pub use spec::{FormatSpec, SideMode};
+pub use specification::{
+    AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification,
+};
 
 /// DSK format type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

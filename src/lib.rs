@@ -83,7 +83,10 @@ pub mod protection;
 pub use error::{DskError, Result};
 pub use fdc::{FdcStatus1, FdcStatus2};
 pub use filesystem::{CpmFileSystem, DirEntry, FileAttributes, FileSystem, FileSystemInfo};
-pub use format::{DskFormat, FormatSpec, SideMode};
+pub use format::{
+    AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification, DskFormat,
+    FormatSpec, SideMode,
+};
 pub use image::{
     DataRate, Disk, DskImage, DskImageBuilder, RecordingMode, Sector, SectorId, SectorStatus,
     Track,

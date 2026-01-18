@@ -35,6 +35,8 @@ impl CommandCompleter {
                 "read-sector",
                 "save",
                 "sectors",
+                "specification",
+                "spec",
                 "strings",
                 "tracks",
             ],
@@ -348,6 +350,14 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "specification" | "spec" => {
+                if let Some(ref img) = image {
+                    let spec = DiskSpecification::identify(img);
+                    print!("{}", spec);
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             "disassemble" | "dasm" => {
                 if let Some(ref img) = image {
                     let side: u8 = 0;
@@ -490,6 +500,7 @@ fn print_help() {
     println!("  fs-list                        - List files on CP/M filesystem");
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
     println!("  detect-protection              - Detect copy protection scheme");
+    println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
     println!("  map [side]                     - Visual sector map (white=ok, red=error, yellow=deleted)");
