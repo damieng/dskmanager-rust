@@ -1,4 +1,4 @@
-/// Interactive DSK sandbox console application
+/// Interactive DSK console application
 
 use dez80::Instruction;
 use dskmanager::*;
@@ -9,7 +9,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-/// Command completer for the sandbox REPL
+/// Command completer for the REPL
 struct CommandCompleter {
     commands: Vec<&'static str>,
 }
@@ -90,7 +90,7 @@ fn history_path() -> Option<std::path::PathBuf> {
 }
 
 fn main() {
-    println!("--- DSKManager Sandbox ---");
+    println!("=== DSKManager ===");
     println!("Interactive console for exploring DSK format disk images.");
     println!("Type 'help' for available commands\n");
 
@@ -495,7 +495,7 @@ fn print_help() {
     println!("  map [side]                     - Visual sector map (white=ok, red=error, yellow=deleted)");
     println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  help                           - Show this help");
-    println!("  quit, exit                     - Exit the sandbox");
+    println!("  quit, exit                     - Exit");
 }
 
 fn print_info(image: &DskImage) {

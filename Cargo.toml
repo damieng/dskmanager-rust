@@ -2,6 +2,7 @@
 name = "dskmanager-rust"
 version = "0.1.0"
 edition = "2021"
+default-run = "dsk"
 authors = ["Damien Guard"]
 description = "A Rust library for reading and writing DSK disk image files with filesystem support"
 license = "MIT OR Apache-2.0"
@@ -15,15 +16,15 @@ categories = ["filesystem", "parser-implementations"]
 name = "dskmanager"
 path = "src/lib.rs"
 
-[[examples]]
-name = "sandbox"
-path = "examples/sandbox.rs"
+[[bin]]
+name = "dsk"
+path = "src/bin/dsk.rs"
 
 [dependencies]
 thiserror = "2.0"
-
-[dev-dependencies]
-proptest = "1.4"
 dez80 = "4.0"
 rustyline = "15.0"
 dirs = "6.0"
+
+[dev-dependencies]
+proptest = "1.4"

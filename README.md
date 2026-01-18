@@ -10,7 +10,7 @@ An idiomatic Rust library and cli for reading and writing DSK disk image files w
 - **Format Presets**: Built-in configurations for Amstrad CPC, Spectrum +3, PCW, and IBM PC formats
 - **Copy Protection Detection**: Automatic detection of 20+ copy protection schemes (Alkatraz, Speedlock, Hexagon, Frontier, and more)
 - **Comprehensive Testing**: Extensive unit and integration test coverage
-- **Interactive Sandbox**: Console application for exploring DSK files
+- **Interactive CLI**: Command-line tool for exploring DSK files
 
 ## Quick Start
 
@@ -101,12 +101,19 @@ let image = DskImage::builder()
 println!("Created disk with {} KB capacity", image.total_capacity_kb());
 ```
 
-## Interactive console
+## Interactive CLI
 
-The library includes an interactive console application for exploring DSK files:
+The library includes an interactive command-line tool for exploring DSK files:
 
 ```bash
-cargo run --example sandbox
+cargo run --bin dsk
+```
+
+Or install it as a binary:
+
+```bash
+cargo install --path .
+dsk
 ```
 
 Available commands:
@@ -122,6 +129,7 @@ Available commands:
 - `detect-protection` - Detect copy protection schemes on the disk
 - `disassemble [track] [sector]` - Disassemble Z80 code from a sector
 - `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
+- `map [side]` - Visual sector map (▓=in-use, ░=empty, colored by status)
 - `save <path>` - Save image to file
 - `help` - Show help
 - `quit` - Exit
@@ -222,7 +230,7 @@ cargo doc --open
 
 ## CLI
 
-- `cli/sandbox.rs` - Interactive console application
+The `dsk` binary provides an interactive console for exploring DSK files. Run it with `cargo run --bin dsk` or install it with `cargo install --path .`.
 
 ## References
 
