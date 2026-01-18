@@ -23,6 +23,7 @@ impl CommandCompleter {
                 "detect-protection",
                 "disassemble",
                 "exit",
+                "fs-export",
                 "fs-list",
                 "fs-mount",
                 "fs-read",
@@ -247,13 +248,17 @@ fn main() {
                 if let Some(ref img) = image {
                     match CpmFileSystem::from_image(img) {
                         Ok(fs) => {
-                            match fs.read_dir() {
+                            match fs.read_dir_extended() {
                                 Ok(entries) => {
                                     if entries.is_empty() {
                                         println!("No files found.");
                                     } else {
-                                        println!("{:<20} {:>10} {:<10} {}", "Name", "Size", "User", "Attributes");
-                                        println!("{}", "-".repeat(60));
+                                        println!(
+                                            "{:<14} {:>3} {:>3} {:>6} {:>8} {:>8} {:>3} {:<8} {:>4} {}",
+                                            "Name", "Idx", "Blk", "Alloc", "Size", "HdrSize", "Att",
+                                            "Header", "Chk", "Meta"
+                                        );
+                                        println!("{}", "-".repeat(90));
                                         for entry in entries {
                                             let attrs = format!(
                                                 "{}{}{}",
@@ -261,7 +266,30 @@ fn main() {
                                                 if entry.attributes.system { "S" } else { "-" },
                                                 if entry.attributes.archive { "A" } else { "-" }
                                             );
-                                            println!("{:<20} {:>10} {:<10} {}", entry.name, entry.size, entry.user, attrs);
+                                            let header_type = format!("{}", entry.header.header_type);
+                                            let checksum = if entry.header.header_type != HeaderType::None {
+                                                if entry.header.checksum_valid { "Yes" } else { "No" }
+                                            } else {
+                                                ""
+                                            };
+                                            let header_size = if entry.header.header_type != HeaderType::None {
+                                                format!("{}", entry.header.file_size)
+                                            } else {
+                                                String::new()
+                                            };
+                                            println!(
+                                                "{:<14} {:>3} {:>3} {:>5}K {:>8} {:>8} {:>3} {:<8} {:>4} {}",
+                                                entry.name,
+                                                entry.index,
+                                                entry.blocks,
+                                                entry.allocated / 1024,
+                                                entry.size,
+                                                header_size,
+                                                attrs,
+                                                header_type,
+                                                checksum,
+                                                entry.header.meta
+                                            );
                                         }
                                     }
                                 }
@@ -288,6 +316,41 @@ fn main() {
                                     print_hex_dump(&data, 256);
                                 }
                                 Err(e) => println!("Error: {}", e),
+                            }
+                        }
+                        Err(e) => println!("Error mounting filesystem: {}", e),
+                    }
+                } else {
+                    println!("No image loaded.");
+                }
+            }
+            "fs-export" => {
+                if let Some(ref img) = image {
+                    if parts.len() < 2 {
+                        println!("Usage: fs-export <filename> [output_path]");
+                        continue;
+                    }
+                    let src_filename = &parts[1];
+                    // If no output path specified, use the source filename
+                    let output_path = if parts.len() >= 3 {
+                        parts[2].clone()
+                    } else {
+                        src_filename.clone()
+                    };
+
+                    match CpmFileSystem::from_image(img) {
+                        Ok(fs) => {
+                            match fs.read_file(src_filename) {
+                                Ok(data) => {
+                                    match std::fs::write(&output_path, &data) {
+                                        Ok(_) => {
+                                            println!("Exported {} ({} bytes) to {}",
+                                                src_filename, data.len(), output_path);
+                                        }
+                                        Err(e) => println!("Error writing file: {}", e),
+                                    }
+                                }
+                                Err(e) => println!("Error reading file: {}", e),
                             }
                         }
                         Err(e) => println!("Error mounting filesystem: {}", e),
@@ -499,6 +562,7 @@ fn print_help() {
     println!("  fs-mount                       - Mount CP/M filesystem");
     println!("  fs-list                        - List files on CP/M filesystem");
     println!("  fs-read <filename>             - Read file from CP/M filesystem");
+    println!("  fs-export <file> [output]      - Export file from disk to host filesystem");
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");

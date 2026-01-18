@@ -28,6 +28,54 @@ impl Default for FileAttributes {
     }
 }
 
+/// File header type
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderType {
+    /// No recognized header
+    None,
+    /// AMSDOS header (Amstrad CPC)
+    Amsdos,
+    /// PLUS3DOS header (Spectrum +3)
+    Plus3dos,
+}
+
+impl std::fmt::Display for HeaderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HeaderType::None => write!(f, ""),
+            HeaderType::Amsdos => write!(f, "AMSDOS"),
+            HeaderType::Plus3dos => write!(f, "PLUS3DOS"),
+        }
+    }
+}
+
+/// Parsed file header information
+#[derive(Debug, Clone)]
+pub struct FileHeader {
+    /// Header type
+    pub header_type: HeaderType,
+    /// Whether checksum is valid
+    pub checksum_valid: bool,
+    /// Actual file size from header
+    pub file_size: usize,
+    /// Header size in bytes (typically 128)
+    pub header_size: usize,
+    /// Metadata description (e.g., "BASIC", "BINARY 0x1234 EXEC 0x1234")
+    pub meta: String,
+}
+
+impl Default for FileHeader {
+    fn default() -> Self {
+        Self {
+            header_type: HeaderType::None,
+            checksum_valid: false,
+            file_size: 0,
+            header_size: 0,
+            meta: String::new(),
+        }
+    }
+}
+
 /// Directory entry
 #[derive(Debug, Clone)]
 pub struct DirEntry {
@@ -41,6 +89,27 @@ pub struct DirEntry {
     pub size: usize,
     /// File attributes
     pub attributes: FileAttributes,
+}
+
+/// Extended directory entry with additional information
+#[derive(Debug, Clone)]
+pub struct ExtendedDirEntry {
+    /// Filename (8.3 format, e.g., "FILENAME.TXT")
+    pub name: String,
+    /// User number (0-15)
+    pub user: u8,
+    /// Directory entry index
+    pub index: usize,
+    /// Number of allocation blocks
+    pub blocks: usize,
+    /// Allocated size in bytes (blocks * block_size)
+    pub allocated: usize,
+    /// File size in bytes (from record count)
+    pub size: usize,
+    /// File attributes
+    pub attributes: FileAttributes,
+    /// Parsed header information
+    pub header: FileHeader,
 }
 
 /// Filesystem information
@@ -78,4 +147,126 @@ pub trait FileSystem {
 
     /// Get filesystem information
     fn info(&self) -> FileSystemInfo;
+}
+
+/// Try to parse an AMSDOS header from data
+pub fn try_amsdos_header(data: &[u8]) -> Option<FileHeader> {
+    if data.len() < 128 {
+        return None;
+    }
+
+    // Calculate checksum of bytes 0-66
+    let calc_checksum: u16 = data[0..=66].iter().map(|&b| b as u16).sum();
+    let stored_checksum = u16::from_le_bytes([data[67], data[68]]);
+
+    if calc_checksum != stored_checksum {
+        return None;
+    }
+
+    // Valid AMSDOS header
+    let file_size = data[64] as usize
+        | ((data[65] as usize) << 8)
+        | ((data[66] as usize) << 16);
+
+    let load_addr = u16::from_le_bytes([data[21], data[22]]);
+    let exec_addr = u16::from_le_bytes([data[26], data[27]]);
+
+    let meta = match data[18] {
+        0 => "BASIC".to_string(),
+        1 => "BASIC (protected)".to_string(),
+        2 => format!("BINARY ${:04X} EXEC ${:04X}", load_addr, exec_addr),
+        3 => format!("BINARY (protected) ${:04X} EXEC ${:04X}", load_addr, exec_addr),
+        4 => "SCREEN".to_string(),
+        5 => "SCREEN (protected)".to_string(),
+        6 => "ASCII".to_string(),
+        7 => "ASCII (protected)".to_string(),
+        other => format!("Custom 0x{:02X}", other),
+    };
+
+    Some(FileHeader {
+        header_type: HeaderType::Amsdos,
+        checksum_valid: true,
+        file_size,
+        header_size: 128,
+        meta,
+    })
+}
+
+/// Try to parse a PLUS3DOS header from data
+pub fn try_plus3dos_header(data: &[u8]) -> Option<FileHeader> {
+    if data.len() < 128 {
+        return None;
+    }
+
+    // Check signature
+    if &data[0..8] != b"PLUS3DOS" {
+        return None;
+    }
+
+    // Calculate checksum of bytes 0-126
+    let calc_checksum: u8 = data[0..=126].iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+    let stored_checksum = data[127];
+    let checksum_valid = calc_checksum == stored_checksum;
+
+    let file_size = data[11] as usize
+        | ((data[12] as usize) << 8)
+        | ((data[13] as usize) << 16)
+        | ((data[14] as usize) << 24);
+
+    let param1 = u16::from_le_bytes([data[18], data[19]]);
+    let param2 = u16::from_le_bytes([data[16], data[17]]);
+
+    let meta = match data[15] {
+        0 => {
+            if param1 != 0x8000 {
+                format!("BASIC LINE {}", param1)
+            } else {
+                "BASIC".to_string()
+            }
+        }
+        1 => {
+            // DATA array - variable name is at data[19]
+            let var_char = if data[19] >= 64 {
+                (data[19] - 64) as char
+            } else {
+                '?'
+            };
+            // Array dimensions would be at data[129..131] but we may not have that data
+            format!("DATA {}()", var_char)
+        }
+        2 => {
+            // DATA string array
+            let var_char = if data[19] >= 128 {
+                (data[19] - 128) as char
+            } else {
+                '?'
+            };
+            format!("DATA {}$()", var_char)
+        }
+        3 => format!("CODE {},{}", param1, param2),
+        other => format!("Custom 0x{:02X}", other),
+    };
+
+    Some(FileHeader {
+        header_type: HeaderType::Plus3dos,
+        checksum_valid,
+        file_size,
+        header_size: 128,
+        meta,
+    })
+}
+
+/// Try to parse any recognized header from data
+pub fn try_parse_header(data: &[u8]) -> FileHeader {
+    // Try PLUS3DOS first (has explicit signature)
+    if let Some(header) = try_plus3dos_header(data) {
+        return header;
+    }
+
+    // Try AMSDOS (checksum-based detection)
+    if let Some(header) = try_amsdos_header(data) {
+        return header;
+    }
+
+    FileHeader::default()
 }

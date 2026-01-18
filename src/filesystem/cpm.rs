@@ -1,7 +1,10 @@
 /// CP/M filesystem implementation
 
 use crate::error::{DskError, Result};
-use crate::filesystem::{DirEntry, FileAttributes, FileSystem, FileSystemInfo};
+use crate::filesystem::{
+    try_parse_header, DirEntry, ExtendedDirEntry, FileAttributes, FileHeader, FileSystem,
+    FileSystemInfo,
+};
 use crate::format::{AllocationSize, DiskSpecification};
 use crate::image::DskImage;
 use std::collections::HashMap;
@@ -9,6 +12,8 @@ use std::collections::HashMap;
 /// CP/M directory entry (32 bytes)
 #[derive(Debug, Clone)]
 struct CpmDirEntry {
+    /// Directory entry index (position in directory)
+    index: usize,
     user: u8,
     filename: [u8; 8],
     extension: [u8; 3],
@@ -22,7 +27,7 @@ struct CpmDirEntry {
 
 impl CpmDirEntry {
     /// Parse a directory entry from 32 bytes
-    fn parse(data: &[u8]) -> Option<Self> {
+    fn parse(data: &[u8], index: usize) -> Option<Self> {
         if data.len() < 32 {
             return None;
         }
@@ -47,6 +52,7 @@ impl CpmDirEntry {
         let allocation = data[16..32].to_vec();
 
         Some(Self {
+            index,
             user,
             filename,
             extension,
@@ -157,11 +163,11 @@ impl<'a> CpmFileSystem<'a> {
         let dir_data = Self::read_directory_data(image, spec, max_entries)?;
 
         // Parse directory entries (32 bytes each)
-        for chunk in dir_data.chunks(32) {
+        for (index, chunk) in dir_data.chunks(32).enumerate() {
             if chunk.len() < 32 {
                 break;
             }
-            if let Some(entry) = CpmDirEntry::parse(chunk) {
+            if let Some(entry) = CpmDirEntry::parse(chunk, index) {
                 entries.push(entry);
             }
         }
@@ -334,6 +340,77 @@ impl<'a> CpmFileSystem<'a> {
     pub fn specification(&self) -> &DiskSpecification {
         &self.spec
     }
+
+    /// Read the first block of a file to parse headers
+    fn read_first_block(&self, blocks: &[u16]) -> Result<Vec<u8>> {
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Just read the first block
+        self.read_blocks(&blocks[..1])
+    }
+
+    /// List directory entries with extended information including headers
+    pub fn read_dir_extended(&self) -> Result<Vec<ExtendedDirEntry>> {
+        let files = self.merge_extents();
+        let mut entries = Vec::new();
+        let block_size = self.spec.block_size();
+
+        for (filename, extents) in files {
+            if extents.is_empty() {
+                continue;
+            }
+
+            let first_extent = extents[0];
+
+            // Collect all blocks from all extents
+            let mut all_blocks = Vec::new();
+            for extent in &extents {
+                all_blocks.extend(self.extract_blocks(extent));
+            }
+
+            // Calculate total file size from all extents
+            let mut total_size = 0;
+            for (i, extent) in extents.iter().enumerate() {
+                let is_last = i == extents.len() - 1;
+                if is_last {
+                    total_size += extent.extent_size(extent.bytes_in_last_record);
+                } else {
+                    total_size += extent.record_count as usize * 128;
+                }
+            }
+
+            // Calculate allocated size
+            let allocated = all_blocks.len() * block_size;
+
+            // Try to read the first block and parse header
+            let header = if !all_blocks.is_empty() {
+                match self.read_first_block(&all_blocks) {
+                    Ok(data) => try_parse_header(&data),
+                    Err(_) => FileHeader::default(),
+                }
+            } else {
+                FileHeader::default()
+            };
+
+            entries.push(ExtendedDirEntry {
+                name: filename,
+                user: first_extent.user,
+                index: first_extent.index,
+                blocks: all_blocks.len(),
+                allocated,
+                size: total_size,
+                attributes: first_extent.attributes(),
+                header,
+            });
+        }
+
+        // Sort by filename
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(entries)
+    }
 }
 
 impl CpmFileSystem<'_> {
@@ -490,8 +567,9 @@ mod tests {
         data[12] = 0; // Extent low
         data[15] = 10; // Record count
 
-        let entry = CpmDirEntry::parse(&data).unwrap();
+        let entry = CpmDirEntry::parse(&data, 0).unwrap();
         assert_eq!(entry.user, 0);
+        assert_eq!(entry.index, 0);
         assert_eq!(entry.filename_str(), "TESTFILE.TXT");
         assert_eq!(entry.record_count, 10);
     }
@@ -501,7 +579,7 @@ mod tests {
         let mut data = [0u8; 32];
         data[0] = 0xE5; // Deleted
 
-        let entry = CpmDirEntry::parse(&data);
+        let entry = CpmDirEntry::parse(&data, 0);
         assert!(entry.is_none());
     }
 
@@ -515,8 +593,9 @@ mod tests {
         data[10] = b'X' | 0x80; // System
         data[11] = b'T' | 0x80; // Archive
 
-        let entry = CpmDirEntry::parse(&data).unwrap();
+        let entry = CpmDirEntry::parse(&data, 5).unwrap();
         assert_eq!(entry.filename_str(), "TESTFILE.TXT");
+        assert_eq!(entry.index, 5);
         assert!(entry.is_read_only());
         assert!(entry.is_system());
         assert!(entry.is_archive());
@@ -531,7 +610,8 @@ mod tests {
         data[12] = 3; // Extent low
         data[14] = 1; // Extent high
 
-        let entry = CpmDirEntry::parse(&data).unwrap();
+        let entry = CpmDirEntry::parse(&data, 10).unwrap();
+        assert_eq!(entry.index, 10);
         // Extent number = (high << 5) | (low & 0x1F) = (1 << 5) | 3 = 35
         assert_eq!(entry.extent_number(), 35);
     }

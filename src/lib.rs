@@ -82,7 +82,10 @@ pub mod protection;
 // Re-export common types
 pub use error::{DskError, Result};
 pub use fdc::{FdcStatus1, FdcStatus2};
-pub use filesystem::{CpmFileSystem, DirEntry, FileAttributes, FileSystem, FileSystemInfo};
+pub use filesystem::{
+    CpmFileSystem, DirEntry, ExtendedDirEntry, FileAttributes, FileHeader, FileSystem,
+    FileSystemInfo, HeaderType,
+};
 pub use format::{
     AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification, DskFormat,
     FormatSpec, SideMode,
