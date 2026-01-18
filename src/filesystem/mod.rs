@@ -174,8 +174,8 @@ pub fn try_amsdos_header(data: &[u8]) -> Option<FileHeader> {
     let meta = match data[18] {
         0 => "BASIC".to_string(),
         1 => "BASIC (protected)".to_string(),
-        2 => format!("BINARY ${:04X} EXEC ${:04X}", load_addr, exec_addr),
-        3 => format!("BINARY (protected) ${:04X} EXEC ${:04X}", load_addr, exec_addr),
+        2 => format!("BINARY {} EXEC {}", load_addr, exec_addr),
+        3 => format!("BINARY (protected) {} EXEC {}", load_addr, exec_addr),
         4 => "SCREEN".to_string(),
         5 => "SCREEN (protected)".to_string(),
         6 => "ASCII".to_string(),
