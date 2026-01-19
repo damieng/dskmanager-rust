@@ -127,12 +127,25 @@ impl<'a> DiscipleFileSystem<'a> {
         &self.mgt
     }
 
+    /// Get file size from Disciple directory entry (offsets 212-213)
+    fn get_file_size(&self, entry: &MgtDirEntry) -> usize {
+        let raw = &entry.raw_data;
+        if raw.len() >= 214 {
+            // File length at offset 212-213 ($d4-$d5), little endian
+            u16::from_le_bytes([raw[212], raw[213]]) as usize
+        } else {
+            // Fallback to allocated size if header not available
+            entry.file_size()
+        }
+    }
+
     /// Read directory with Disciple-specific information
     pub fn read_dir_extended(&self) -> Result<Vec<ExtendedDirEntry>> {
         let mut entries = Vec::new();
 
         for dir_entry in self.mgt.directory() {
             let header = self.parse_disciple_header(dir_entry);
+            let file_size = self.get_file_size(dir_entry);
 
             entries.push(ExtendedDirEntry {
                 name: dir_entry.filename.clone(),
@@ -140,7 +153,7 @@ impl<'a> DiscipleFileSystem<'a> {
                 index: dir_entry.index,
                 blocks: dir_entry.sectors_used as usize,
                 allocated: dir_entry.file_size(),
-                size: dir_entry.file_size(),
+                size: file_size,
                 attributes: dir_entry.attributes(),
                 header,
             });
@@ -152,32 +165,43 @@ impl<'a> DiscipleFileSystem<'a> {
     /// Parse Disciple-specific header from directory entry
     fn parse_disciple_header(&self, entry: &MgtDirEntry) -> FileHeader {
         let raw = &entry.raw_data;
-        let file_type = DiscipleFileType::from_mgt_type(&entry.file_type, raw);
+        
+        // Determine file type from tape header ID at offset 211 ($d3) if available
+        let file_type = if raw.len() >= 212 {
+            let tape_header_id = raw[211];
+            match tape_header_id {
+                0 => DiscipleFileType::Basic,
+                1 => DiscipleFileType::NumericArray,
+                2 => DiscipleFileType::StringArray,
+                3 => DiscipleFileType::Code,
+                _ => DiscipleFileType::from_mgt_type(&entry.file_type, raw),
+            }
+        } else {
+            DiscipleFileType::from_mgt_type(&entry.file_type, raw)
+        };
 
         // Extract header info from offset 0xD2 (210)
         let meta = if raw.len() >= 220 {
-            let header_offset = 210;
-
             match file_type {
                 DiscipleFileType::Code | DiscipleFileType::Screen => {
-                    // Load address at offset 211-212 (little endian)
-                    let load_addr = if raw.len() >= header_offset + 3 {
-                        u16::from_le_bytes([raw[header_offset + 1], raw[header_offset + 2]])
+                    // Start address at offset 214-215 ($d6-$d7), little endian
+                    let start_addr = if raw.len() >= 216 {
+                        u16::from_le_bytes([raw[214], raw[215]])
                     } else {
                         0
                     };
-                    // Length at offset 213-214
-                    let length = if raw.len() >= header_offset + 5 {
-                        u16::from_le_bytes([raw[header_offset + 3], raw[header_offset + 4]])
+                    // File length at offset 212-213 ($d4-$d5), little endian
+                    let length = if raw.len() >= 214 {
+                        u16::from_le_bytes([raw[212], raw[213]])
                     } else {
                         0
                     };
-                    format!("{} {},{}",file_type, load_addr, length)
+                    format!("{} {},{}", file_type, start_addr, length)
                 }
                 DiscipleFileType::Basic => {
-                    // Auto-start line at offset 217-218
-                    let auto_line = if raw.len() >= header_offset + 9 {
-                        u16::from_le_bytes([raw[header_offset + 7], raw[header_offset + 8]])
+                    // Autostart line/address at offset 218-219 ($da-$db), little endian
+                    let auto_line = if raw.len() >= 220 {
+                        u16::from_le_bytes([raw[218], raw[219]])
                     } else {
                         0
                     };
@@ -196,10 +220,13 @@ impl<'a> DiscipleFileSystem<'a> {
             format!("{}", file_type)
         };
 
+        // File size from offset 212-213 ($d4-$d5)
+        let file_size = self.get_file_size(entry);
+
         FileHeader {
             header_type: HeaderType::None, // Disciple has its own header format
             checksum_valid: true,
-            file_size: entry.file_size(),
+            file_size,
             header_size: 0,
             meta,
         }
