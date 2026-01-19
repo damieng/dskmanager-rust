@@ -401,55 +401,98 @@ fn main() {
                         other => other,
                     };
 
-                    let data_result: Result<Vec<u8>> = match effective_fs {
+                    match effective_fs {
                         FileSystemType::Mgt => {
+                            // For MGT filesystems, use directory entry info instead of parsing headers
                             match DiscipleFileSystem::new(img) {
-                                Ok(fs) => fs.read_file(src_filename),
-                                Err(e) => Err(e),
+                                Ok(fs) => {
+                                    // Get the directory entry to determine actual file size
+                                    match fs.mgt().find_file(src_filename) {
+                                        Some(entry) => {
+                                            // Read the file data
+                                            match fs.read_file(src_filename) {
+                                                Ok(mut data) => {
+                                                    let original_size = data.len();
+                                                    
+                                                    // Get actual file size from directory entry (for Disciple, this is at offset 212-213)
+                                                    let actual_file_size = if entry.raw_data.len() >= 214 {
+                                                        // File length at offset 212-213 ($d4-$d5), little endian
+                                                        u16::from_le_bytes([entry.raw_data[212], entry.raw_data[213]]) as usize
+                                                    } else {
+                                                        // Fallback to allocated size
+                                                        entry.file_size()
+                                                    };
+                                                    
+                                                    // Trim data to actual file size (MGT files don't have AMSDOS headers)
+                                                    if actual_file_size < data.len() {
+                                                        data.truncate(actual_file_size);
+                                                    }
+                                                    
+                                                    match std::fs::write(&output_path, &data) {
+                                                        Ok(_) => {
+                                                            if raw_mode {
+                                                                println!("Exported {} ({} bytes, raw) to {}",
+                                                                    src_filename, original_size, output_path);
+                                                            } else {
+                                                                println!("Exported {} ({} bytes) to {}",
+                                                                    src_filename, data.len(), output_path);
+                                                            }
+                                                        }
+                                                        Err(e) => println!("Error writing file: {}", e),
+                                                    }
+                                                }
+                                                Err(e) => println!("Error reading file: {}", e),
+                                            }
+                                        }
+                                        None => println!("File not found: {}", src_filename),
+                                    }
+                                }
+                                Err(e) => println!("Error reading file: {}", e),
                             }
                         }
                         FileSystemType::Cpm | FileSystemType::Auto => {
-                            match CpmFileSystem::from_image(img) {
+                            // For CP/M filesystems, use header parsing as before
+                            let data_result: Result<Vec<u8>> = match CpmFileSystem::from_image(img) {
                                 Ok(fs) => fs.read_file(src_filename),
                                 Err(e) => Err(e),
-                            }
-                        }
-                    };
+                            };
 
-                    match data_result {
-                        Ok(mut data) => {
-                            let original_size = data.len();
-                            let header = try_parse_header(&data);
+                            match data_result {
+                                Ok(mut data) => {
+                                    let original_size = data.len();
+                                    let header = try_parse_header(&data);
 
-                            // Strip header if not in raw mode and header is detected
-                            if !raw_mode && header.header_size > 0 {
-                                match header.header_type {
-                                    HeaderType::Amsdos | HeaderType::Plus3dos => {
-                                        // Strip the header
-                                        if data.len() >= header.header_size {
-                                            data.drain(0..header.header_size);
-                                            println!("Stripped {} header ({} bytes)",
-                                                header.header_type, header.header_size);
+                                    // Strip header if not in raw mode and header is detected
+                                    if !raw_mode && header.header_size > 0 {
+                                        match header.header_type {
+                                            HeaderType::Amsdos | HeaderType::Plus3dos => {
+                                                // Strip the header
+                                                if data.len() >= header.header_size {
+                                                    data.drain(0..header.header_size);
+                                                    println!("Stripped {} header ({} bytes)",
+                                                        header.header_type, header.header_size);
+                                                }
+                                            }
+                                            HeaderType::None => {}
                                         }
                                     }
-                                    HeaderType::None => {}
-                                }
-                            }
 
-                            match std::fs::write(&output_path, &data) {
-                                Ok(_) => {
-                                    if raw_mode {
-                                        println!("Exported {} ({} bytes, raw) to {}",
-                                            src_filename, original_size, output_path);
-                                    } else {
-                                        println!("Exported {} ({} bytes) to {}",
-                                            src_filename, data.len(), output_path);
+                                    match std::fs::write(&output_path, &data) {
+                                        Ok(_) => {
+                                            if raw_mode {
+                                                println!("Exported {} ({} bytes, raw) to {}",
+                                                    src_filename, original_size, output_path);
+                                            } else {
+                                                println!("Exported {} ({} bytes) to {}",
+                                                    src_filename, data.len(), output_path);
+                                            }
+                                        }
+                                        Err(e) => println!("Error writing file: {}", e),
                                     }
                                 }
-                                Err(e) => println!("Error writing file: {}", e),
+                                Err(e) => println!("Error reading file: {}", e),
                             }
                         }
-                        Err(e) => println!("Error reading file: {}", e),
                     }
                 } else {
                     println!("No image loaded.");
