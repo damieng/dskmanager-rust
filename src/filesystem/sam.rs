@@ -59,7 +59,7 @@ impl std::fmt::Display for SamFileType {
     }
 }
 
-/// SAM-specific header info extracted from directory entry
+/// SAM-specific metadata extracted from directory entry
 #[derive(Debug, Clone)]
 pub struct SamHeader {
     /// File type
@@ -113,7 +113,7 @@ impl<'a> SamFileSystem<'a> {
         Ok(entries)
     }
 
-    /// Parse SAM-specific header from directory entry
+    /// Parse SAM-specific metadata from directory entry
     fn parse_sam_header(&self, entry: &MgtDirEntry) -> FileHeader {
         let raw = &entry.raw_data;
         let file_type = SamFileType::from_mgt_type(&entry.file_type);
@@ -201,22 +201,13 @@ impl<'a> SamFileSystem<'a> {
     }
 
     /// Read a file by name
+    /// Returns file data truncated to actual file length (not allocated size)
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>> {
-        self.read_file_binary(name, false)
-    }
-
-    /// Read file binary data with optional header/metadata inclusion
-    /// 
-    /// # Arguments
-    /// * `name` - Filename to read
-    /// * `include_header` - If true, returns full allocated data (sectors_used * 512 bytes).
-    ///                      If false, returns data trimmed to actual file size from directory entry.
-    pub fn read_file_binary(&self, name: &str, include_header: bool) -> Result<Vec<u8>> {
         let entry = self
             .mgt
             .find_file(name)
             .ok_or_else(|| crate::error::DskError::FileNotFound(name.to_string()))?;
-        self.mgt.read_file_binary(entry, include_header)
+        self.mgt.read_file(entry)
     }
 
     /// List all files

@@ -322,17 +322,8 @@ impl<'a> MgtFileSystem<'a> {
     }
 
     /// Read file data by following the sector map
+    /// Returns file data truncated to actual file length (not allocated size)
     pub fn read_file(&self, entry: &MgtDirEntry) -> Result<Vec<u8>> {
-        self.read_file_binary(entry, false)
-    }
-
-    /// Read file binary data with optional header/metadata inclusion
-    /// 
-    /// # Arguments
-    /// * `entry` - Directory entry for the file
-    /// * `include_header` - If true, returns full allocated data (sectors_used * 512 bytes).
-    ///                      If false, returns data trimmed to actual file size (if available in directory entry).
-    pub fn read_file_binary(&self, entry: &MgtDirEntry, include_header: bool) -> Result<Vec<u8>> {
         let mut data = Vec::new();
         let sectors_to_read = entry.sectors_used as usize;
 
@@ -387,9 +378,9 @@ impl<'a> MgtFileSystem<'a> {
             }
         }
 
-        // If include_header is false, try to trim to actual file size
+        // Trim to actual file size (MGT stores metadata in directory entry, not headers in file data)
         // For Disciple/+D, actual file size is stored at offset 212-213 in directory entry
-        if !include_header && entry.raw_data.len() >= 214 {
+        if entry.raw_data.len() >= 214 {
             let actual_file_size = u16::from_le_bytes([entry.raw_data[212], entry.raw_data[213]]) as usize;
             if actual_file_size > 0 && actual_file_size < data.len() {
                 data.truncate(actual_file_size);
@@ -404,7 +395,7 @@ impl<'a> MgtFileSystem<'a> {
         let mut entries = Vec::new();
 
         for dir_entry in &self.directory_entries {
-            // Try to read file header for metadata
+            // Parse metadata from directory entry (MGT stores metadata in directory, not headers in file data)
             let header = if dir_entry.sectors_used > 0 {
                 match self.read_file(dir_entry) {
                     Ok(data) => self.parse_file_header(dir_entry, &data),
@@ -429,9 +420,10 @@ impl<'a> MgtFileSystem<'a> {
         Ok(entries)
     }
 
-    /// Parse file header - can be overridden by subclasses
+    /// Parse file metadata - can be overridden by subclasses
+    /// MGT filesystems store metadata in directory entries, not headers in file data
     fn parse_file_header(&self, entry: &MgtDirEntry, _data: &[u8]) -> FileHeader {
-        // Create header based on file type
+        // Create metadata string based on file type
         let meta = format!("{}", entry.file_type);
 
         FileHeader {

@@ -551,65 +551,6 @@ impl CpmFileSystem<'_> {
         CpmFileSystem::new(image, spec)
     }
 
-    /// Read file binary data with optional header inclusion
-    /// 
-    /// # Arguments
-    /// * `name` - Filename to read
-    /// * `include_header` - If true, returns raw data including AMSDOS/PLUS3DOS headers if present.
-    ///                      If false, strips headers and returns only file data.
-    pub fn read_file_binary(&self, name: &str, include_header: bool) -> Result<Vec<u8>> {
-        let files = self.merge_extents();
-
-        let extents = files
-            .get(name)
-            .ok_or_else(|| DskError::FileNotFound(name.to_string()))?;
-
-        if extents.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Read all allocation blocks from all extents
-        let mut file_data = Vec::new();
-
-        for extent in extents {
-            let blocks = self.extract_blocks(extent);
-            let block_data = self.read_blocks(&blocks)?;
-            file_data.extend_from_slice(&block_data);
-        }
-
-        // Trim to actual file size
-        let mut actual_size = 0;
-        for (i, extent) in extents.iter().enumerate() {
-            let is_last = i == extents.len() - 1;
-            if is_last {
-                actual_size += extent.extent_size(extent.bytes_in_last_record);
-            } else {
-                actual_size += extent.record_count as usize * 128;
-            }
-        }
-
-        if file_data.len() > actual_size {
-            file_data.truncate(actual_size);
-        }
-
-        // If include_header is false, strip headers if present
-        if !include_header {
-            let header = try_parse_header(&file_data);
-            if header.header_size > 0 {
-                match header.header_type {
-                    HeaderType::Amsdos | HeaderType::Plus3dos => {
-                        // Strip the header
-                        if file_data.len() >= header.header_size {
-                            file_data.drain(0..header.header_size);
-                        }
-                    }
-                    HeaderType::None => {}
-                }
-            }
-        }
-
-        Ok(file_data)
-    }
 }
 
 impl<'a> FileSystem for CpmFileSystem<'a> {
@@ -671,7 +612,55 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
     }
 
     fn read_file(&self, name: &str) -> Result<Vec<u8>> {
-        self.read_file_binary(name, false)
+        let files = self.merge_extents();
+
+        let extents = files
+            .get(name)
+            .ok_or_else(|| DskError::FileNotFound(name.to_string()))?;
+
+        if extents.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Read all allocation blocks from all extents
+        let mut file_data = Vec::new();
+
+        for extent in extents {
+            let blocks = self.extract_blocks(extent);
+            let block_data = self.read_blocks(&blocks)?;
+            file_data.extend_from_slice(&block_data);
+        }
+
+        // Trim to actual file size
+        let mut actual_size = 0;
+        for (i, extent) in extents.iter().enumerate() {
+            let is_last = i == extents.len() - 1;
+            if is_last {
+                actual_size += extent.extent_size(extent.bytes_in_last_record);
+            } else {
+                actual_size += extent.record_count as usize * 128;
+            }
+        }
+
+        if file_data.len() > actual_size {
+            file_data.truncate(actual_size);
+        }
+
+        // Strip headers if present (CP/M filesystems may have AMSDOS/PLUS3DOS headers)
+        let header = try_parse_header(&file_data);
+        if header.header_size > 0 {
+            match header.header_type {
+                HeaderType::Amsdos | HeaderType::Plus3dos => {
+                    // Strip the header
+                    if file_data.len() >= header.header_size {
+                        file_data.drain(0..header.header_size);
+                    }
+                }
+                HeaderType::None => {}
+            }
+        }
+
+        Ok(file_data)
     }
 
     fn write_file(&mut self, _name: &str, _data: &[u8]) -> Result<()> {
@@ -701,6 +690,68 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
             free_blocks: total_blocks.saturating_sub(used_blocks + dir_blocks),
             block_size: self.spec.block_size(),
         }
+    }
+}
+
+impl CpmFileSystem<'_> {
+    /// Read file binary data with optional header inclusion (CP/M only)
+    /// 
+    /// # Arguments
+    /// * `name` - Filename to read
+    /// * `include_header` - If true, returns raw data including AMSDOS/PLUS3DOS headers if present.
+    ///                      If false, strips headers and returns only file data.
+    pub fn read_file_binary(&self, name: &str, include_header: bool) -> Result<Vec<u8>> {
+        let files = self.merge_extents();
+
+        let extents = files
+            .get(name)
+            .ok_or_else(|| DskError::FileNotFound(name.to_string()))?;
+
+        if extents.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Read all allocation blocks from all extents
+        let mut file_data = Vec::new();
+
+        for extent in extents {
+            let blocks = self.extract_blocks(extent);
+            let block_data = self.read_blocks(&blocks)?;
+            file_data.extend_from_slice(&block_data);
+        }
+
+        // Trim to actual file size
+        let mut actual_size = 0;
+        for (i, extent) in extents.iter().enumerate() {
+            let is_last = i == extents.len() - 1;
+            if is_last {
+                actual_size += extent.extent_size(extent.bytes_in_last_record);
+            } else {
+                actual_size += extent.record_count as usize * 128;
+            }
+        }
+
+        if file_data.len() > actual_size {
+            file_data.truncate(actual_size);
+        }
+
+        // If include_header is false, strip headers if present
+        if !include_header {
+            let header = try_parse_header(&file_data);
+            if header.header_size > 0 {
+                match header.header_type {
+                    HeaderType::Amsdos | HeaderType::Plus3dos => {
+                        // Strip the header
+                        if file_data.len() >= header.header_size {
+                            file_data.drain(0..header.header_size);
+                        }
+                    }
+                    HeaderType::None => {}
+                }
+            }
+        }
+
+        Ok(file_data)
     }
 }
 

@@ -6,14 +6,14 @@
 /// - MGT +D
 ///
 /// Directory entry extensions at offset 0xD2 (210):
-/// - 10 bytes for Disciple/+D header info
+/// - 10 bytes for Disciple/+D metadata
 
 use crate::error::Result;
 use crate::filesystem::mgt::{MgtDirEntry, MgtFileSystem, MgtFileType};
 use crate::filesystem::{ExtendedDirEntry, FileHeader, HeaderType};
 use crate::image::DiskImage;
 
-/// Disciple/+D specific file header info
+/// Disciple/+D specific file metadata
 #[derive(Debug, Clone)]
 pub struct DiscipleHeader {
     /// File type description
@@ -162,7 +162,7 @@ impl<'a> DiscipleFileSystem<'a> {
         Ok(entries)
     }
 
-    /// Parse Disciple-specific header from directory entry
+    /// Parse Disciple-specific metadata from directory entry
     fn parse_disciple_header(&self, entry: &MgtDirEntry) -> FileHeader {
         let raw = &entry.raw_data;
         
@@ -224,7 +224,7 @@ impl<'a> DiscipleFileSystem<'a> {
         let file_size = self.get_file_size(entry);
 
         FileHeader {
-            header_type: HeaderType::None, // Disciple has its own header format
+            header_type: HeaderType::None, // Disciple stores metadata in directory entry, not headers in file data
             checksum_valid: true,
             file_size,
             header_size: 0,
@@ -233,22 +233,13 @@ impl<'a> DiscipleFileSystem<'a> {
     }
 
     /// Read a file by name
+    /// Returns file data truncated to actual file length (not allocated size)
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>> {
-        self.read_file_binary(name, false)
-    }
-
-    /// Read file binary data with optional header/metadata inclusion
-    /// 
-    /// # Arguments
-    /// * `name` - Filename to read
-    /// * `include_header` - If true, returns full allocated data (sectors_used * 512 bytes).
-    ///                      If false, returns data trimmed to actual file size from directory entry.
-    pub fn read_file_binary(&self, name: &str, include_header: bool) -> Result<Vec<u8>> {
         let entry = self
             .mgt
             .find_file(name)
             .ok_or_else(|| crate::error::DskError::FileNotFound(name.to_string()))?;
-        self.mgt.read_file_binary(entry, include_header)
+        self.mgt.read_file(entry)
     }
 
     /// List all files

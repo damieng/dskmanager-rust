@@ -375,8 +375,9 @@ fn main() {
                 if let Some(ref img) = image {
                     if parts.len() < 2 {
                         println!("Usage: fs-export <filename> [output_path] [raw]");
-                        println!("  By default, AMSDOS and PLUS3DOS headers are stripped.");
-                        println!("  Use 'raw' option to preserve headers.");
+                        println!("  CP/M files: AMSDOS and PLUS3DOS headers are stripped by default.");
+                        println!("             Use 'raw' option to preserve headers (CP/M only).");
+                        println!("  MGT files: Data is truncated to actual file length (raw option ignored).");
                         continue;
                     }
                     let src_filename = &parts[1];
@@ -401,17 +402,26 @@ fn main() {
                         other => other,
                     };
 
-                    // Use the new read_file_binary method
+                    // Read file data
+                    // Raw mode only applies to CP/M filesystems (they have headers in file data)
+                    // MGT filesystems store metadata in directory entries, so raw mode is ignored
                     let data_result: Result<Vec<u8>> = match effective_fs {
                         FileSystemType::Mgt => {
+                            // Raw mode ignored for MGT - always truncate to real file length
                             match DiscipleFileSystem::new(img) {
-                                Ok(fs) => fs.read_file_binary(src_filename, raw_mode),
+                                Ok(fs) => fs.read_file(src_filename),
                                 Err(e) => Err(e),
                             }
                         }
                         FileSystemType::Cpm | FileSystemType::Auto => {
                             match CpmFileSystem::from_image(img) {
-                                Ok(fs) => fs.read_file_binary(src_filename, raw_mode),
+                                Ok(fs) => {
+                                    if raw_mode {
+                                        fs.read_file_binary(src_filename, true)
+                                    } else {
+                                        fs.read_file(src_filename)
+                                    }
+                                }
                                 Err(e) => Err(e),
                             }
                         }
@@ -421,7 +431,7 @@ fn main() {
                         Ok(data) => {
                             match std::fs::write(&output_path, &data) {
                                 Ok(_) => {
-                                    if raw_mode {
+                                    if raw_mode && matches!(effective_fs, FileSystemType::Cpm | FileSystemType::Auto) {
                                         println!("Exported {} ({} bytes, raw) to {}",
                                             src_filename, data.len(), output_path);
                                     } else {
