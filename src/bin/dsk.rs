@@ -21,12 +21,12 @@ impl CommandCompleter {
             commands: vec![
                 "create",
                 "dasm",
-                "detect-protection",
+                "protection",
                 "disassemble",
                 "exit",
                 "fs-export",
                 "fs-list",
-                "fs-mount",
+                "fs-info",
                 "fs-read",
                 "fs-switch",
                 "help",
@@ -233,16 +233,16 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
-            "fs-mount" => {
+            "fs-info" => {
                 if let Some(ref img) = image {
                     match CpmFileSystem::from_image(img) {
                         Ok(fs) => {
                             let info = fs.info();
-                            println!("Mounted {} filesystem", info.fs_type);
-                            println!("  Total blocks: {}", info.total_blocks);
-                            println!("  Free blocks: {}", info.free_blocks);
-                            println!("  Block size: {} bytes", info.block_size);
-                            println!("  Total capacity: {} KB", info.total_blocks * info.block_size / 1024);
+                            println!("{} filesystem", info.fs_type);
+                            println!("Total blocks: {}", info.total_blocks);
+                            println!("Free blocks: {}", info.free_blocks);
+                            println!("Block size: {} bytes", info.block_size);
+                            println!("Total capacity: {} KB", info.total_blocks * info.block_size / 1024);
                         }
                         Err(e) => println!("Error: {}", e),
                     }
@@ -481,7 +481,7 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
-            "detect-protection" => {
+            "protection" => {
                 if let Some(ref img) = image {
                     let mut found_any = false;
                     let has_multiple_sides = img.disks().len() > 1;
@@ -559,8 +559,6 @@ fn main() {
 
                     match img.read_sector(side, track, sector_id) {
                         Ok(data) => {
-                            println!("=== Z80 Disassembly: Track {}, Sector {} ({} bytes) ===\n",
-                                track, sector_id, data.len());
                             disassemble_z80(data);
                         }
                         Err(e) => println!("Error: {}", e),
@@ -595,7 +593,6 @@ fn main() {
                     if strings.is_empty() {
                         println!("No strings found (min length: {}, min unique: {}).", min_length, min_unique);
                     } else {
-                        println!("=== Strings (min length: {}, min unique: {}) ===\n", min_length, min_unique);
                         for hit in &strings {
                             println!(
                                 "S{}:T{}:{}+{:03X}: {}",
@@ -667,14 +664,14 @@ fn print_help() {
     println!("  tracks                         - List all tracks");
     println!("  sectors [track] [side]         - List sectors (all or specific track/side)");
     println!("  read-sector <s> <t> <id>       - Read and display a sector");
-    println!("  fs-mount                       - Mount filesystem and show info");
+    println!("  fs-info                        - Show filesystem information");
     println!("  fs-list                        - List files on disk");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
     println!("  fs-export <file> [output_path] [raw] - Export file from disk to host filesystem");
     println!("                                         (output_path defaults to filename if not specified)");
     println!("                                         (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
     println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
-    println!("  detect-protection              - Detect copy protection scheme");
+    println!("  protection                     - Detect copy protection scheme");
     println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
@@ -685,7 +682,6 @@ fn print_help() {
 }
 
 fn print_info(image: &DiskImage) {
-    println!("=== Disk Information ===");
     if let Some(filename) = image.filename() {
         println!("Filename: {}", filename);
     }
@@ -700,7 +696,6 @@ fn print_info(image: &DiskImage) {
 }
 
 fn list_tracks(image: &DiskImage) {
-    println!("=== Tracks ===");
     for (side_idx, disk) in image.disks().iter().enumerate() {
         println!("\nSide {}:", side_idx);
         println!(
@@ -733,7 +728,6 @@ fn list_tracks(image: &DiskImage) {
 fn list_sectors_on_track(image: &DiskImage, side: u8, track: u8) {
     if let Some(disk) = image.disks().get(side as usize) {
         if let Some(track_data) = disk.get_track(track) {
-            println!("=== Sectors on Side {}, Track {} ===", side, track);
             println!(
                 "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
                 "Sector", "Track", "Side", "ID", "FDC Size", "FDC Flags", "Data Size", "Status"
@@ -758,7 +752,6 @@ fn list_sectors_on_track(image: &DiskImage, side: u8, track: u8) {
                 );
             }
 
-            println!("\nTotal sectors: {}", track_data.sector_count());
         } else {
             println!("Track {} not found on side {}.", track, side);
         }
@@ -768,11 +761,8 @@ fn list_sectors_on_track(image: &DiskImage, side: u8, track: u8) {
 }
 
 fn list_all_sectors(image: &DiskImage) {
-    println!("=== All Sectors ===");
-
-    for (side_idx, disk) in image.disks().iter().enumerate() {
+    for (_side_idx, disk) in image.disks().iter().enumerate() {
         for track in disk.tracks() {
-            println!("\n--- Side {}, Track {} ---", side_idx, track.track_number);
             println!(
                 "{:<6} {:<6} {:<6} {:<6} {:<12} {:<10} {:<10} {:<12}",
                 "Sector", "Track", "Side", "ID", "FDC Size", "FDC Flags", "Data Size", "Status"
@@ -797,7 +787,6 @@ fn list_all_sectors(image: &DiskImage) {
                 );
             }
 
-            println!("Total sectors: {}", track.sector_count());
         }
     }
 }

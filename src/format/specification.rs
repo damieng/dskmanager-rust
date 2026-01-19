@@ -479,26 +479,25 @@ fn get_first_logical_sector(image: &DiskImage) -> Option<(u8, Vec<u8>)> {
 
 impl fmt::Display for DiskSpecification {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Disk Specification")?;
-        writeln!(f, "  Source: {}", self.source)?;
-        writeln!(f, "  Format: {}", self.format)?;
-        writeln!(f, "  Side: {}", self.side)?;
-        writeln!(f, "  Track: {}", self.track)?;
-        writeln!(f, "  Tracks per side: {}", self.tracks_per_side)?;
-        writeln!(f, "  Sectors per track: {}", self.sectors_per_track)?;
-        writeln!(f, "  Sector size: {} bytes", self.sector_size)?;
-        writeln!(f, "  FDC sector size: {}", self.fdc_sector_size)?;
-        writeln!(f, "  Reserved tracks: {}", self.reserved_tracks)?;
-        writeln!(f, "  Block shift: {}", self.block_shift)?;
-        writeln!(f, "  Block size: {} bytes", self.block_size())?;
-        writeln!(f, "  Block count: {}", self.block_count())?;
-        writeln!(f, "  Directory blocks: {}", self.directory_blocks)?;
-        writeln!(f, "  Directory entries: {}", self.directory_entries())?;
-        writeln!(f, "  Gap (R/W): {}", self.gap_read_write)?;
-        writeln!(f, "  Gap (Format): {}", self.gap_format)?;
-        writeln!(f, "  Allocation size: {}", self.allocation_size)?;
-        writeln!(f, "  Usable capacity: {} bytes", self.usable_capacity())?;
-        writeln!(f, "  Total capacity: {} bytes", self.total_capacity())?;
+        writeln!(f, "Source: {}", self.source)?;
+        writeln!(f, "Format: {}", self.format)?;
+        writeln!(f, "Side: {}", self.side)?;
+        writeln!(f, "Track: {}", self.track)?;
+        writeln!(f, "Tracks per side: {}", self.tracks_per_side)?;
+        writeln!(f, "Sectors per track: {}", self.sectors_per_track)?;
+        writeln!(f, "Sector size: {} bytes", self.sector_size)?;
+        writeln!(f, "FDC sector size: {}", self.fdc_sector_size)?;
+        writeln!(f, "Reserved tracks: {}", self.reserved_tracks)?;
+        writeln!(f, "Block shift: {}", self.block_shift)?;
+        writeln!(f, "Block size: {} bytes", self.block_size())?;
+        writeln!(f, "Block count: {}", self.block_count())?;
+        writeln!(f, "Directory blocks: {}", self.directory_blocks)?;
+        writeln!(f, "Directory entries: {}", self.directory_entries())?;
+        writeln!(f, "Gap (R/W): {}", self.gap_read_write)?;
+        writeln!(f, "Gap (Format): {}", self.gap_format)?;
+        writeln!(f, "Allocation size: {}", self.allocation_size)?;
+        writeln!(f, "Usable capacity: {} bytes", self.usable_capacity())?;
+        writeln!(f, "Total capacity: {} bytes", self.total_capacity())?;
         Ok(())
     }
 }
