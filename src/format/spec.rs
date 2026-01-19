@@ -202,10 +202,6 @@ impl FormatSpec {
             * self.sector_size as usize
     }
 
-    /// Calculate total disk capacity in kilobytes
-    pub fn total_capacity_kb(&self) -> usize {
-        self.total_capacity() / 1024
-    }
 
     /// Set the interleave factor
     pub fn with_interleave(mut self, interleave: u8) -> Self {
@@ -240,14 +236,14 @@ mod tests {
     fn test_amstrad_system_capacity() {
         let spec = FormatSpec::amstrad_system();
         assert_eq!(spec.total_capacity(), 40 * 9 * 512);
-        assert_eq!(spec.total_capacity_kb(), 180);
+        assert_eq!(spec.total_capacity() / 1024, 180);
     }
 
     #[test]
     fn test_amstrad_data_ds_capacity() {
         let spec = FormatSpec::amstrad_data_ds();
         assert_eq!(spec.total_capacity(), 2 * 40 * 9 * 512);
-        assert_eq!(spec.total_capacity_kb(), 360);
+        assert_eq!(spec.total_capacity() / 1024, 360);
     }
 
     #[test]
@@ -261,7 +257,7 @@ mod tests {
     #[test]
     fn test_ibm_pc_360k() {
         let spec = FormatSpec::ibm_pc_360k();
-        assert_eq!(spec.total_capacity_kb(), 360);
+        assert_eq!(spec.total_capacity() / 1024, 360);
         assert_eq!(spec.side_mode, SideMode::Alternate);
     }
 

@@ -254,7 +254,7 @@ fn main() {
                                     let free_sectors = mgt_info.free_sectors;
                                     println!("Block size: {} bytes", sector_size);
                                     println!("Total blocks: {}", total_sectors);
-                                    println!("Total capacity: {} KB", total_sectors * sector_size / 1024);
+                                    println!("Usable capacity: {} KB", total_sectors * sector_size / 1024);
                                     println!("Free blocks: {}", free_sectors);
                                     println!("Free space: {} KB", free_sectors * sector_size / 1024);
                                 }
@@ -268,7 +268,7 @@ fn main() {
                                     println!("{} filesystem", info.fs_type);
                                     println!("Block size: {} bytes", info.block_size);
                                     println!("Total blocks: {}", info.total_blocks);
-                                    println!("Total capacity: {} KB", info.total_blocks * info.block_size / 1024);
+                                    println!("Usable capacity: {} KB", info.total_blocks * info.block_size / 1024);
                                     println!("Free blocks: {}", info.free_blocks);
                                     println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
                                 }
@@ -714,6 +714,7 @@ fn print_help() {
 fn print_info(image: &DiskImage) {
     if let Some(filename) = image.filename() {
         println!("Filename: {}", filename);
+        println!("Changed: {}", if image.is_changed() { "Yes" } else { "No" });
     }
     println!("Format: {}", image.format().name());
     println!("Sides: {}", image.spec().num_sides);
@@ -721,8 +722,6 @@ fn print_info(image: &DiskImage) {
     println!("Sectors per track: {}", image.spec().sectors_per_track);
     println!("Sector size: {} bytes", image.spec().sector_size);
     println!("First sector ID: {}", image.spec().first_sector_id);
-    println!("Total capacity: {} KB", image.total_capacity_kb());
-    println!("Changed: {}", if image.is_changed() { "Yes" } else { "No" });
 }
 
 fn list_tracks(image: &DiskImage) {

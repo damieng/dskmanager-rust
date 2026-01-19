@@ -97,8 +97,6 @@ let image = DiskImage::builder()
     .sectors_per_track(9)
     .sector_size(512)
     .build()?;
-
-println!("Created disk with {} KB capacity", image.total_capacity_kb());
 ```
 
 ## Interactive CLI

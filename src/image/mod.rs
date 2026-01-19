@@ -197,11 +197,6 @@ impl DiskImage {
         self.spec.total_capacity()
     }
 
-    /// Get the total capacity in kilobytes
-    pub fn total_capacity_kb(&self) -> usize {
-        self.spec.total_capacity_kb()
-    }
-
     /// Read the entire disk in logical order
     ///
     /// This reads the disk as a real FDC would, respecting:
@@ -357,6 +352,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(image.total_capacity(), 2 * 40 * 9 * 512);
-        assert_eq!(image.total_capacity_kb(), 360);
+        assert_eq!(image.total_capacity() / 1024, 360);
     }
 }
