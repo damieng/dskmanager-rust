@@ -34,7 +34,7 @@ pub fn draw_sector_map(image: &DiskImage, side: usize) {
     const BLOCK_NO_DATA: &str = "\u{2591}"; // ░ - Light shade (empty)
     const BLOCK_HAS_DATA: &str = "\u{2593}"; // ▓ - Dark shade (in-use)
 
-    println!("=== Sector Map (Side {}) ===", side);
+    println!("Sector Map (Side {})", side);
     println!(
         "Legend: {}In Use{} {}Filler{} {}Error{} {}Deleted{}",
         colors::BRIGHT_WHITE, colors::RESET,

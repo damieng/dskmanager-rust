@@ -235,16 +235,46 @@ fn main() {
             }
             "fs-info" => {
                 if let Some(ref img) = image {
-                    match CpmFileSystem::from_image(img) {
-                        Ok(fs) => {
-                            let info = fs.info();
-                            println!("{} filesystem", info.fs_type);
-                            println!("Total blocks: {}", info.total_blocks);
-                            println!("Free blocks: {}", info.free_blocks);
-                            println!("Block size: {} bytes", info.block_size);
-                            println!("Total capacity: {} KB", info.total_blocks * info.block_size / 1024);
+                    // Determine effective filesystem type
+                    let effective_fs = match filesystem_mode {
+                        FileSystemType::Auto => img.default_filesystem(),
+                        other => other,
+                    };
+
+                    // Use appropriate filesystem
+                    match effective_fs {
+                        FileSystemType::Mgt => {
+                            match DiscipleFileSystem::new(img) {
+                                Ok(fs) => {
+                                    let mgt_info = fs.mgt().info();
+                                    println!("MGT filesystem ({})", mgt_info.system_type);
+                                    // MGT uses sectors (512 bytes each)
+                                    let sector_size = 512;
+                                    let total_sectors = mgt_info.total_sectors;
+                                    let free_sectors = mgt_info.free_sectors;
+                                    println!("Block size: {} bytes", sector_size);
+                                    println!("Total blocks: {}", total_sectors);
+                                    println!("Total capacity: {} KB", total_sectors * sector_size / 1024);
+                                    println!("Free blocks: {}", free_sectors);
+                                    println!("Free space: {} KB", free_sectors * sector_size / 1024);
+                                }
+                                Err(e) => println!("Error: {}", e),
+                            }
                         }
-                        Err(e) => println!("Error: {}", e),
+                        FileSystemType::Cpm | FileSystemType::Auto => {
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => {
+                                    let info = fs.info();
+                                    println!("{} filesystem", info.fs_type);
+                                    println!("Block size: {} bytes", info.block_size);
+                                    println!("Total blocks: {}", info.total_blocks);
+                                    println!("Total capacity: {} KB", info.total_blocks * info.block_size / 1024);
+                                    println!("Free blocks: {}", info.free_blocks);
+                                    println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
+                                }
+                                Err(e) => println!("Error: {}", e),
+                            }
+                        }
                     }
                 } else {
                     println!("No image loaded.");
@@ -699,10 +729,10 @@ fn list_tracks(image: &DiskImage) {
     for (side_idx, disk) in image.disks().iter().enumerate() {
         println!("\nSide {}:", side_idx);
         println!(
-            "{:<8} {:<8} {:<12} {:<8} {:<6} {:<8}",
-            "Logical", "Physical", "Track Size", "Sectors", "Gap", "Filler"
+            "{:<8} {:<8} {:<12} {:<8} {:<4} {:<8} {:<11}",
+            "Logical", "Physical", "Track Size", "Sectors", "Gap", "Filler", "Status"
         );
-        println!("{}", "-".repeat(60));
+        println!("{}", "-".repeat(69));
         
         for (physical_idx, track) in disk.tracks().iter().enumerate() {
             // Logical track number is what the sectors claim (use first sector's track if available, otherwise track_number)
@@ -712,14 +742,30 @@ fn list_tracks(image: &DiskImage) {
                 track.track_number
             };
             
+            // Determine track status
+            let status = if track.is_empty() {
+                "Unformatted"
+            } else {
+                let filler = track.filler_byte;
+                let has_in_use = track.sectors().iter().any(|s| {
+                    matches!(s.status(filler), crate::image::SectorStatus::FormattedInUse)
+                });
+                if has_in_use {
+                    "In use"
+                } else {
+                    "Blank"
+                }
+            };
+            
             println!(
-                "{:<8} {:<8} {:<12} {:<8} {:<6} 0x{:02X}",
+                "{:<8} {:<8} {:<12} {:<8} {:<4} 0x{:02X}     {:<11}",
                 logical_track,
                 physical_idx,
                 track.total_data_size(),
                 track.sector_count(),
                 track.gap3_length,
-                track.filler_byte
+                track.filler_byte,
+                status
             );
         }
     }
