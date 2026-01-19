@@ -401,98 +401,38 @@ fn main() {
                         other => other,
                     };
 
-                    match effective_fs {
+                    // Use the new read_file_binary method
+                    let data_result: Result<Vec<u8>> = match effective_fs {
                         FileSystemType::Mgt => {
-                            // For MGT filesystems, use directory entry info instead of parsing headers
                             match DiscipleFileSystem::new(img) {
-                                Ok(fs) => {
-                                    // Get the directory entry to determine actual file size
-                                    match fs.mgt().find_file(src_filename) {
-                                        Some(entry) => {
-                                            // Read the file data
-                                            match fs.read_file(src_filename) {
-                                                Ok(mut data) => {
-                                                    let original_size = data.len();
-                                                    
-                                                    // Get actual file size from directory entry (for Disciple, this is at offset 212-213)
-                                                    let actual_file_size = if entry.raw_data.len() >= 214 {
-                                                        // File length at offset 212-213 ($d4-$d5), little endian
-                                                        u16::from_le_bytes([entry.raw_data[212], entry.raw_data[213]]) as usize
-                                                    } else {
-                                                        // Fallback to allocated size
-                                                        entry.file_size()
-                                                    };
-                                                    
-                                                    // Trim data to actual file size (MGT files don't have AMSDOS headers)
-                                                    if actual_file_size < data.len() {
-                                                        data.truncate(actual_file_size);
-                                                    }
-                                                    
-                                                    match std::fs::write(&output_path, &data) {
-                                                        Ok(_) => {
-                                                            if raw_mode {
-                                                                println!("Exported {} ({} bytes, raw) to {}",
-                                                                    src_filename, original_size, output_path);
-                                                            } else {
-                                                                println!("Exported {} ({} bytes) to {}",
-                                                                    src_filename, data.len(), output_path);
-                                                            }
-                                                        }
-                                                        Err(e) => println!("Error writing file: {}", e),
-                                                    }
-                                                }
-                                                Err(e) => println!("Error reading file: {}", e),
-                                            }
-                                        }
-                                        None => println!("File not found: {}", src_filename),
-                                    }
-                                }
-                                Err(e) => println!("Error reading file: {}", e),
+                                Ok(fs) => fs.read_file_binary(src_filename, raw_mode),
+                                Err(e) => Err(e),
                             }
                         }
                         FileSystemType::Cpm | FileSystemType::Auto => {
-                            // For CP/M filesystems, use header parsing as before
-                            let data_result: Result<Vec<u8>> = match CpmFileSystem::from_image(img) {
-                                Ok(fs) => fs.read_file(src_filename),
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => fs.read_file_binary(src_filename, raw_mode),
                                 Err(e) => Err(e),
-                            };
-
-                            match data_result {
-                                Ok(mut data) => {
-                                    let original_size = data.len();
-                                    let header = try_parse_header(&data);
-
-                                    // Strip header if not in raw mode and header is detected
-                                    if !raw_mode && header.header_size > 0 {
-                                        match header.header_type {
-                                            HeaderType::Amsdos | HeaderType::Plus3dos => {
-                                                // Strip the header
-                                                if data.len() >= header.header_size {
-                                                    data.drain(0..header.header_size);
-                                                    println!("Stripped {} header ({} bytes)",
-                                                        header.header_type, header.header_size);
-                                                }
-                                            }
-                                            HeaderType::None => {}
-                                        }
-                                    }
-
-                                    match std::fs::write(&output_path, &data) {
-                                        Ok(_) => {
-                                            if raw_mode {
-                                                println!("Exported {} ({} bytes, raw) to {}",
-                                                    src_filename, original_size, output_path);
-                                            } else {
-                                                println!("Exported {} ({} bytes) to {}",
-                                                    src_filename, data.len(), output_path);
-                                            }
-                                        }
-                                        Err(e) => println!("Error writing file: {}", e),
-                                    }
-                                }
-                                Err(e) => println!("Error reading file: {}", e),
                             }
                         }
+                    };
+
+                    match data_result {
+                        Ok(data) => {
+                            match std::fs::write(&output_path, &data) {
+                                Ok(_) => {
+                                    if raw_mode {
+                                        println!("Exported {} ({} bytes, raw) to {}",
+                                            src_filename, data.len(), output_path);
+                                    } else {
+                                        println!("Exported {} ({} bytes) to {}",
+                                            src_filename, data.len(), output_path);
+                                    }
+                                }
+                                Err(e) => println!("Error writing file: {}", e),
+                            }
+                        }
+                        Err(e) => println!("Error reading file: {}", e),
                     }
                 } else {
                     println!("No image loaded.");
@@ -727,8 +667,9 @@ fn print_help() {
     println!("  fs-mount                       - Mount filesystem and show info");
     println!("  fs-list                        - List files on disk");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
-    println!("  fs-export <file> [output] [raw] - Export file from disk to host filesystem");
-    println!("                                    (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
+    println!("  fs-export <file> [output_path] [raw] - Export file from disk to host filesystem");
+    println!("                                         (output_path defaults to filename if not specified)");
+    println!("                                         (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
     println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  specification                  - Detect and display disk specification (spec)");

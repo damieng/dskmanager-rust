@@ -323,6 +323,16 @@ impl<'a> MgtFileSystem<'a> {
 
     /// Read file data by following the sector map
     pub fn read_file(&self, entry: &MgtDirEntry) -> Result<Vec<u8>> {
+        self.read_file_binary(entry, false)
+    }
+
+    /// Read file binary data with optional header/metadata inclusion
+    /// 
+    /// # Arguments
+    /// * `entry` - Directory entry for the file
+    /// * `include_header` - If true, returns full allocated data (sectors_used * 512 bytes).
+    ///                      If false, returns data trimmed to actual file size (if available in directory entry).
+    pub fn read_file_binary(&self, entry: &MgtDirEntry, include_header: bool) -> Result<Vec<u8>> {
         let mut data = Vec::new();
         let sectors_to_read = entry.sectors_used as usize;
 
@@ -374,6 +384,15 @@ impl<'a> MgtFileSystem<'a> {
             if current_sector > 10 {
                 current_sector = 1;
                 current_track += 1;
+            }
+        }
+
+        // If include_header is false, try to trim to actual file size
+        // For Disciple/+D, actual file size is stored at offset 212-213 in directory entry
+        if !include_header && entry.raw_data.len() >= 214 {
+            let actual_file_size = u16::from_le_bytes([entry.raw_data[212], entry.raw_data[213]]) as usize;
+            if actual_file_size > 0 && actual_file_size < data.len() {
+                data.truncate(actual_file_size);
             }
         }
 

@@ -202,11 +202,21 @@ impl<'a> SamFileSystem<'a> {
 
     /// Read a file by name
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>> {
+        self.read_file_binary(name, false)
+    }
+
+    /// Read file binary data with optional header/metadata inclusion
+    /// 
+    /// # Arguments
+    /// * `name` - Filename to read
+    /// * `include_header` - If true, returns full allocated data (sectors_used * 512 bytes).
+    ///                      If false, returns data trimmed to actual file size from directory entry.
+    pub fn read_file_binary(&self, name: &str, include_header: bool) -> Result<Vec<u8>> {
         let entry = self
             .mgt
             .find_file(name)
             .ok_or_else(|| crate::error::DskError::FileNotFound(name.to_string()))?;
-        self.mgt.read_file(entry)
+        self.mgt.read_file_binary(entry, include_header)
     }
 
     /// List all files
