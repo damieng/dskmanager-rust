@@ -254,7 +254,7 @@ fn main() {
                 if let Some(ref img) = image {
                     // Determine effective filesystem type
                     let effective_fs = match filesystem_mode {
-                        FileSystemType::Auto => img.format().default_filesystem(),
+                        FileSystemType::Auto => img.default_filesystem(),
                         other => other,
                     };
 
@@ -341,7 +341,7 @@ fn main() {
 
                     // Determine effective filesystem type
                     let effective_fs = match filesystem_mode {
-                        FileSystemType::Auto => img.format().default_filesystem(),
+                        FileSystemType::Auto => img.default_filesystem(),
                         other => other,
                     };
 
@@ -398,7 +398,7 @@ fn main() {
 
                     // Determine effective filesystem type
                     let effective_fs = match filesystem_mode {
-                        FileSystemType::Auto => img.format().default_filesystem(),
+                        FileSystemType::Auto => img.default_filesystem(),
                         other => other,
                     };
 
@@ -453,7 +453,7 @@ fn main() {
                     // Show current mode
                     let effective = if let Some(ref img) = image {
                         match filesystem_mode {
-                            FileSystemType::Auto => img.format().default_filesystem(),
+                            FileSystemType::Auto => img.default_filesystem(),
                             other => other,
                         }
                     } else {
