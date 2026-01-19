@@ -281,8 +281,8 @@ fn main() {
                             } else {
                                 // Always show all columns including Usr and Del
                                 println!(
-                                    "{:<14} {:>3} {:>3} {:>4} {:>5} {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
-                                    "Name", "Idx", "Usr", "Blks", "Alloc", "Size", "Length", "Att", "Del", "Header", "Chk", "Meta"
+                                    "{:<14} {:>3} {:>3} {:>4} {:>5} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
+                                    "Name", "Idx", "Usr", "Blks", "Alloc", "Size", "Att", "Del", "Header", "Chk", "Meta"
                                 );
                                 println!("{}", "-".repeat(96));
 
@@ -301,22 +301,15 @@ fn main() {
                                     } else {
                                         ""
                                     };
-                                    let data_size = if entry.header.header_type != HeaderType::None {
-                                        let data = entry.header.file_size.saturating_sub(entry.header.header_size);
-                                        format!("{}", data)
-                                    } else {
-                                        String::new()
-                                    };
 
                                     println!(
-                                        "{:<14} {:>3} {:>3} {:>4} {:>4}K {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
+                                        "{:<14} {:>3} {:>3} {:>4} {:>4}K {:>7} {:>3} {:>3} {:<8} {:>3} {}",
                                         entry.name,
                                         entry.index,
                                         user_display,
                                         entry.blocks,
                                         entry.allocated / 1024,
                                         entry.size,
-                                        data_size,
                                         attrs,
                                         if is_deleted { "Yes" } else { "" },
                                         header_type,
