@@ -2,24 +2,73 @@
 
 use crate::error::Result;
 use crate::format::constants::*;
-use crate::format::DskFormat;
-use crate::image::DskImage;
+use crate::format::DiskImageFormat;
+use crate::image::DiskImage;
 use std::fs::File;
 use std::io::{Write};
 use std::path::Path;
 
 /// Write a DSK file to disk
-pub fn write_dsk<P: AsRef<Path>>(image: &DskImage, path: P) -> Result<()> {
+pub fn write_dsk<P: AsRef<Path>>(image: &DiskImage, path: P) -> Result<()> {
     let mut file = File::create(path)?;
 
     match image.format {
-        DskFormat::Standard => write_standard_dsk(&mut file, image),
-        DskFormat::Extended => write_extended_dsk(&mut file, image),
+        DiskImageFormat::StandardDSK => write_standard_dsk(&mut file, image),
+        DiskImageFormat::ExtendedDSK => write_extended_dsk(&mut file, image),
+        DiskImageFormat::RawMgt => write_mgt(&mut file, image),
     }
 }
 
+/// Write a raw MGT file
+fn write_mgt(file: &mut File, image: &DiskImage) -> Result<()> {
+    // MGT format: all side 0 tracks, then all side 1 tracks
+    // 80 tracks per side, 2 sides, 10 sectors per track, 512 bytes per sector
+
+    let tracks_per_side = 80usize;
+    let sectors_per_track = 10usize;
+    let sector_size = 512usize;
+
+    for side in 0..2u8 {
+        // Get the disk for this side
+        if let Some(disk) = image.disks.get(side as usize) {
+            for track_num in 0..tracks_per_side {
+                if let Some(track) = disk.get_track(track_num as u8) {
+                    // Write sectors in ID order (1-10 for MGT)
+                    for sector_id in 1..=sectors_per_track as u8 {
+                        if let Some(sector) = track.get_sector(sector_id) {
+                            let data = sector.data();
+                            if data.len() >= sector_size {
+                                file.write_all(&data[..sector_size])?;
+                            } else {
+                                // Pad with zeros if sector is smaller
+                                file.write_all(data)?;
+                                let padding = vec![0u8; sector_size - data.len()];
+                                file.write_all(&padding)?;
+                            }
+                        } else {
+                            // Sector not found, write zeros
+                            let zeros = vec![0u8; sector_size];
+                            file.write_all(&zeros)?;
+                        }
+                    }
+                } else {
+                    // Track not found, write zeros
+                    let zeros = vec![0u8; sectors_per_track * sector_size];
+                    file.write_all(&zeros)?;
+                }
+            }
+        } else {
+            // Disk not found, write zeros for all tracks
+            let zeros = vec![0u8; tracks_per_side * sectors_per_track * sector_size];
+            file.write_all(&zeros)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Write a Standard DSK file
-fn write_standard_dsk(file: &mut File, image: &DskImage) -> Result<()> {
+fn write_standard_dsk(file: &mut File, image: &DiskImage) -> Result<()> {
     // Calculate track size (assume all tracks are the same size)
     let track_size = calculate_track_size(image);
 
@@ -56,7 +105,7 @@ fn write_standard_dsk(file: &mut File, image: &DskImage) -> Result<()> {
 }
 
 /// Write an Extended DSK file
-fn write_extended_dsk(file: &mut File, image: &DskImage) -> Result<()> {
+fn write_extended_dsk(file: &mut File, image: &DiskImage) -> Result<()> {
     // Write disk info block
     let mut disk_info = vec![0u8; DISK_INFO_BLOCK_SIZE];
 
@@ -171,7 +220,7 @@ fn calculate_single_track_size(track: &crate::image::Track) -> usize {
 }
 
 /// Calculate a uniform track size for standard format
-fn calculate_track_size(image: &DskImage) -> usize {
+fn calculate_track_size(image: &DiskImage) -> usize {
     // Find the largest track size
     let mut max_size = TRACK_INFO_BLOCK_SIZE;
 

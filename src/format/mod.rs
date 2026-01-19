@@ -13,43 +13,58 @@ pub use specification::{
     AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification,
 };
 
+use crate::filesystem::FileSystemType;
+
 /// DSK format type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DskFormat {
+pub enum DiskImageFormat {
     /// Standard DSK format with fixed track sizes
-    Standard,
+    StandardDSK,
     /// Extended DSK format with variable track sizes
-    Extended,
+    ExtendedDSK,
+    /// Raw MGT format (819,200 byte sector dump)
+    RawMgt,
 }
 
-impl DskFormat {
+impl DiskImageFormat {
     /// Get the magic bytes for this format
     pub fn magic_bytes(&self) -> &'static [u8] {
         match self {
-            DskFormat::Standard => STANDARD_DSK_SIGNATURE,
-            DskFormat::Extended => EXTENDED_DSK_SIGNATURE,
+            DiskImageFormat::StandardDSK => STANDARD_DSK_SIGNATURE,
+            DiskImageFormat::ExtendedDSK => EXTENDED_DSK_SIGNATURE,
+            DiskImageFormat::RawMgt => &[], // Raw MGT has no magic bytes
         }
     }
 
     /// Get a human-readable name for this format
     pub fn name(&self) -> &'static str {
         match self {
-            DskFormat::Standard => "Standard DSK",
-            DskFormat::Extended => "Extended DSK",
+            DiskImageFormat::StandardDSK => "Standard DSK",
+            DiskImageFormat::ExtendedDSK => "Extended DSK",
+            DiskImageFormat::RawMgt => "Raw MGT",
+        }
+    }
+
+    /// Get the default filesystem type for this image format
+    pub fn default_filesystem(&self) -> FileSystemType {
+        match self {
+            DiskImageFormat::StandardDSK => FileSystemType::Cpm,
+            DiskImageFormat::ExtendedDSK => FileSystemType::Cpm,
+            DiskImageFormat::RawMgt => FileSystemType::Mgt,
         }
     }
 }
 
 /// Detect DSK format from magic bytes
-pub fn detect_format(magic: &[u8]) -> Option<DskFormat> {
+pub fn detect_format(magic: &[u8]) -> Option<DiskImageFormat> {
     if magic.len() < 8 {
         return None;
     }
 
     if magic.starts_with(b"EXTENDED") {
-        Some(DskFormat::Extended)
+        Some(DiskImageFormat::ExtendedDSK)
     } else if magic.starts_with(b"MV - CPC") {
-        Some(DskFormat::Standard)
+        Some(DiskImageFormat::StandardDSK)
     } else {
         None
     }
@@ -62,13 +77,13 @@ mod tests {
     #[test]
     fn test_detect_standard_format() {
         let result = detect_format(STANDARD_DSK_SIGNATURE);
-        assert_eq!(result, Some(DskFormat::Standard));
+        assert_eq!(result, Some(DiskImageFormat::StandardDSK));
     }
 
     #[test]
     fn test_detect_extended_format() {
         let result = detect_format(EXTENDED_DSK_SIGNATURE);
-        assert_eq!(result, Some(DskFormat::Extended));
+        assert_eq!(result, Some(DiskImageFormat::ExtendedDSK));
     }
 
     #[test]
@@ -80,11 +95,11 @@ mod tests {
     #[test]
     fn test_format_magic_bytes() {
         assert_eq!(
-            DskFormat::Standard.magic_bytes(),
+            DiskImageFormat::StandardDSK.magic_bytes(),
             STANDARD_DSK_SIGNATURE
         );
         assert_eq!(
-            DskFormat::Extended.magic_bytes(),
+            DiskImageFormat::ExtendedDSK.magic_bytes(),
             EXTENDED_DSK_SIGNATURE
         );
     }

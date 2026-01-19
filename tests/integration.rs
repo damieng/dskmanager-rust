@@ -5,9 +5,9 @@ use dskmanager::*;
 #[test]
 fn test_create_and_save_image() {
     let spec = FormatSpec::amstrad_data();
-    let mut image = DskImage::create(spec).expect("Failed to create image");
+    let mut image = DiskImage::create(spec).expect("Failed to create image");
 
-    assert_eq!(image.format(), DskFormat::Standard);
+    assert_eq!(image.format(), DiskImageFormat::StandardDSK);
     assert_eq!(image.disk_count(), 1);
     assert!(image.is_changed());
 
@@ -28,8 +28,8 @@ fn test_create_and_save_image() {
 
 #[test]
 fn test_image_builder() {
-    let image = DskImage::builder()
-        .format(DskFormat::Extended)
+    let image = DiskImage::builder()
+        .format(DiskImageFormat::ExtendedDSK)
         .num_sides(2)
         .num_tracks(40)
         .sectors_per_track(9)
@@ -37,7 +37,7 @@ fn test_image_builder() {
         .build()
         .expect("Failed to build image");
 
-    assert_eq!(image.format(), DskFormat::Extended);
+    assert_eq!(image.format(), DiskImageFormat::ExtendedDSK);
     assert_eq!(image.disk_count(), 2);
     assert_eq!(image.spec().num_tracks, 40);
     assert_eq!(image.spec().sectors_per_track, 9);
@@ -150,7 +150,7 @@ fn test_disk_operations() {
 
 #[test]
 fn test_error_handling() {
-    let image = DskImage::builder()
+    let image = DiskImage::builder()
         .num_sides(1)
         .num_tracks(10)
         .build()
@@ -188,7 +188,7 @@ fn test_format_presets() {
     ];
 
     for spec in formats {
-        let image = DskImage::create(spec.clone()).expect("Failed to create image");
+        let image = DiskImage::create(spec.clone()).expect("Failed to create image");
         assert_eq!(image.spec().num_sides, spec.num_sides);
         assert_eq!(image.spec().num_tracks, spec.num_tracks);
         assert_eq!(image.spec().sectors_per_track, spec.sectors_per_track);
@@ -201,7 +201,7 @@ fn test_capacity_calculations() {
     assert_eq!(spec.total_capacity(), 2 * 80 * 9 * 512);
     assert_eq!(spec.total_capacity_kb(), 720);
 
-    let image = DskImage::create(spec).expect("Failed to create image");
+    let image = DiskImage::create(spec).expect("Failed to create image");
     assert_eq!(image.total_capacity_kb(), 720);
 }
 
@@ -216,8 +216,8 @@ fn test_side_modes() {
 
 #[test]
 fn test_builder_fluent_api() {
-    let image = DskImage::builder()
-        .format(DskFormat::Extended)
+    let image = DiskImage::builder()
+        .format(DiskImageFormat::ExtendedDSK)
         .num_sides(2)
         .num_tracks(80)
         .sectors_per_track(9)
@@ -225,7 +225,7 @@ fn test_builder_fluent_api() {
         .build()
         .expect("Failed to build image");
 
-    assert_eq!(image.format(), DskFormat::Extended);
+    assert_eq!(image.format(), DiskImageFormat::ExtendedDSK);
     assert_eq!(image.disk_count(), 2);
     assert_eq!(image.spec().num_tracks, 80);
 }

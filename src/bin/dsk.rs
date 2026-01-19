@@ -28,9 +28,13 @@ impl CommandCompleter {
                 "fs-list",
                 "fs-mount",
                 "fs-read",
+                "fs-switch",
                 "help",
                 "info",
                 "load",
+                "cat",
+                "dir",
+                "ls",
                 "map",
                 "open",
                 "quit",
@@ -106,7 +110,8 @@ fn main() {
         let _ = rl.load_history(&history_path);
     }
 
-    let mut image: Option<DskImage> = None;
+    let mut image: Option<DiskImage> = None;
+    let mut filesystem_mode = FileSystemType::Auto;
 
     loop {
         let readline = rl.readline("> ");
@@ -161,7 +166,7 @@ fn main() {
                     println!("Usage: open <path>");
                     continue;
                 }
-                match DskImage::open(&parts[1]) {
+                match DiskImage::open(&parts[1]) {
                     Ok(img) => {
                         println!("Opened: {}", parts[1]);
                         image = Some(img);
@@ -181,7 +186,7 @@ fn main() {
                     FormatSpec::amstrad_data()
                 };
 
-                match DskImage::create(spec) {
+                match DiskImage::create(spec) {
                     Ok(img) => {
                         println!("Created new {} image", img.format().name());
                         image = Some(img);
@@ -245,66 +250,83 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
-            "fs-list" => {
+            "fs-list" | "dir" | "cat" | "ls" => {
                 if let Some(ref img) = image {
-                    match CpmFileSystem::from_image(img) {
-                        Ok(fs) => {
-                            match fs.read_dir_extended_with_deleted() {
-                                Ok(entries) => {
-                                    if entries.is_empty() {
-                                        println!("No files found.");
-                                    } else {
-                                        // Always show all columns including Usr and Del
-                                        println!(
-                                            "{:<14} {:>3} {:>3} {:>4} {:>5} {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
-                                            "Name", "Idx", "Usr", "Blks", "Alloc", "Size", "Length", "Att", "Del", "Header", "Chk", "Meta"
-                                        );
-                                        println!("{}", "-".repeat(96));
-                                        
-                                        for entry in entries {
-                                            let is_deleted = entry.user == 0xE5;
-                                            let user_display = if is_deleted { "E5".to_string() } else { format!("{}", entry.user) };
-                                            let attrs = format!(
-                                                "{}{}{}",
-                                                if entry.attributes.read_only { "R" } else { "-" },
-                                                if entry.attributes.system { "S" } else { "-" },
-                                                if entry.attributes.archive { "A" } else { "-" }
-                                            );
-                                            let header_type = format!("{}", entry.header.header_type);
-                                            let checksum = if entry.header.header_type != HeaderType::None {
-                                                if entry.header.checksum_valid { "Yes" } else { "No" }
-                                            } else {
-                                                ""
-                                            };
-                                            let data_size = if entry.header.header_type != HeaderType::None {
-                                                let data = entry.header.file_size.saturating_sub(entry.header.header_size);
-                                                format!("{}", data)
-                                            } else {
-                                                String::new()
-                                            };
-                                            
-                                            println!(
-                                                "{:<14} {:>3} {:>3} {:>4} {:>4}K {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
-                                                entry.name,
-                                                entry.index,
-                                                user_display,
-                                                entry.blocks,
-                                                entry.allocated / 1024,
-                                                entry.size,
-                                                data_size,
-                                                attrs,
-                                                if is_deleted { "Yes" } else { "" },
-                                                header_type,
-                                                checksum,
-                                                entry.header.meta
-                                            );
-                                        }
-                                    }
-                                }
-                                Err(e) => println!("Error: {}", e),
+                    // Determine effective filesystem type
+                    let effective_fs = match filesystem_mode {
+                        FileSystemType::Auto => img.format().default_filesystem(),
+                        other => other,
+                    };
+
+                    // Use appropriate filesystem
+                    let entries_result: Result<Vec<ExtendedDirEntry>> = match effective_fs {
+                        FileSystemType::Mgt => {
+                            match DiscipleFileSystem::new(img) {
+                                Ok(fs) => fs.read_dir_extended(),
+                                Err(e) => Err(e),
                             }
                         }
-                        Err(e) => println!("Error mounting filesystem: {}", e),
+                        FileSystemType::Cpm | FileSystemType::Auto => {
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => fs.read_dir_extended_with_deleted(),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    };
+
+                    match entries_result {
+                        Ok(entries) => {
+                            if entries.is_empty() {
+                                println!("No files found.");
+                            } else {
+                                // Always show all columns including Usr and Del
+                                println!(
+                                    "{:<14} {:>3} {:>3} {:>4} {:>5} {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
+                                    "Name", "Idx", "Usr", "Blks", "Alloc", "Size", "Length", "Att", "Del", "Header", "Chk", "Meta"
+                                );
+                                println!("{}", "-".repeat(96));
+
+                                for entry in entries {
+                                    let is_deleted = entry.user == 0xE5;
+                                    let user_display = if is_deleted { "E5".to_string() } else { format!("{}", entry.user) };
+                                    let attrs = format!(
+                                        "{}{}{}",
+                                        if entry.attributes.read_only { "R" } else { "-" },
+                                        if entry.attributes.system { "S" } else { "-" },
+                                        if entry.attributes.archive { "A" } else { "-" }
+                                    );
+                                    let header_type = format!("{}", entry.header.header_type);
+                                    let checksum = if entry.header.header_type != HeaderType::None {
+                                        if entry.header.checksum_valid { "Yes" } else { "No" }
+                                    } else {
+                                        ""
+                                    };
+                                    let data_size = if entry.header.header_type != HeaderType::None {
+                                        let data = entry.header.file_size.saturating_sub(entry.header.header_size);
+                                        format!("{}", data)
+                                    } else {
+                                        String::new()
+                                    };
+
+                                    println!(
+                                        "{:<14} {:>3} {:>3} {:>4} {:>4}K {:>7} {:>7} {:>3} {:>3} {:<8} {:>3} {}",
+                                        entry.name,
+                                        entry.index,
+                                        user_display,
+                                        entry.blocks,
+                                        entry.allocated / 1024,
+                                        entry.size,
+                                        data_size,
+                                        attrs,
+                                        if is_deleted { "Yes" } else { "" },
+                                        header_type,
+                                        checksum,
+                                        entry.header.meta
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => println!("Error: {}", e),
                     }
                 } else {
                     println!("No image loaded.");
@@ -316,17 +338,34 @@ fn main() {
                         println!("Usage: fs-read <filename>");
                         continue;
                     }
-                    match CpmFileSystem::from_image(img) {
-                        Ok(fs) => {
-                            match fs.read_file(&parts[1]) {
-                                Ok(data) => {
-                                    println!("File: {} ({} bytes)", parts[1], data.len());
-                                    print_hex_dump(&data, 256);
-                                }
-                                Err(e) => println!("Error: {}", e),
+
+                    // Determine effective filesystem type
+                    let effective_fs = match filesystem_mode {
+                        FileSystemType::Auto => img.format().default_filesystem(),
+                        other => other,
+                    };
+
+                    let data_result: Result<Vec<u8>> = match effective_fs {
+                        FileSystemType::Mgt => {
+                            match DiscipleFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(&parts[1]),
+                                Err(e) => Err(e),
                             }
                         }
-                        Err(e) => println!("Error mounting filesystem: {}", e),
+                        FileSystemType::Cpm | FileSystemType::Auto => {
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => fs.read_file(&parts[1]),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    };
+
+                    match data_result {
+                        Ok(data) => {
+                            println!("File: {} ({} bytes)", parts[1], data.len());
+                            print_hex_dump(&data, 256);
+                        }
+                        Err(e) => println!("Error: {}", e),
                     }
                 } else {
                     println!("No image loaded.");
@@ -344,7 +383,7 @@ fn main() {
                     // Parse arguments: filename [output_path] [raw]
                     let mut output_path = None;
                     let mut raw_mode = false;
-                    
+
                     for arg in parts.iter().skip(2) {
                         if arg.to_lowercase() == "raw" {
                             raw_mode = true;
@@ -352,52 +391,94 @@ fn main() {
                             output_path = Some(arg.clone());
                         }
                     }
-                    
+
                     // If no output path specified, use the source filename
                     let output_path = output_path.unwrap_or_else(|| src_filename.clone());
 
-                    match CpmFileSystem::from_image(img) {
-                        Ok(fs) => {
-                            match fs.read_file(src_filename) {
-                                Ok(mut data) => {
-                                    let original_size = data.len();
-                                    let header = try_parse_header(&data);
-                                    
-                                    // Strip header if not in raw mode and header is detected
-                                    if !raw_mode && header.header_size > 0 {
-                                        match header.header_type {
-                                            HeaderType::Amsdos | HeaderType::Plus3dos => {
-                                                // Strip the header
-                                                if data.len() >= header.header_size {
-                                                    data.drain(0..header.header_size);
-                                                    println!("Stripped {} header ({} bytes)", 
-                                                        header.header_type, header.header_size);
-                                                }
-                                            }
-                                            HeaderType::None => {}
-                                        }
-                                    }
+                    // Determine effective filesystem type
+                    let effective_fs = match filesystem_mode {
+                        FileSystemType::Auto => img.format().default_filesystem(),
+                        other => other,
+                    };
 
-                                    match std::fs::write(&output_path, &data) {
-                                        Ok(_) => {
-                                            if raw_mode {
-                                                println!("Exported {} ({} bytes, raw) to {}",
-                                                    src_filename, original_size, output_path);
-                                            } else {
-                                                println!("Exported {} ({} bytes) to {}",
-                                                    src_filename, data.len(), output_path);
-                                            }
-                                        }
-                                        Err(e) => println!("Error writing file: {}", e),
-                                    }
-                                }
-                                Err(e) => println!("Error reading file: {}", e),
+                    let data_result: Result<Vec<u8>> = match effective_fs {
+                        FileSystemType::Mgt => {
+                            match DiscipleFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(src_filename),
+                                Err(e) => Err(e),
                             }
                         }
-                        Err(e) => println!("Error mounting filesystem: {}", e),
+                        FileSystemType::Cpm | FileSystemType::Auto => {
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => fs.read_file(src_filename),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    };
+
+                    match data_result {
+                        Ok(mut data) => {
+                            let original_size = data.len();
+                            let header = try_parse_header(&data);
+
+                            // Strip header if not in raw mode and header is detected
+                            if !raw_mode && header.header_size > 0 {
+                                match header.header_type {
+                                    HeaderType::Amsdos | HeaderType::Plus3dos => {
+                                        // Strip the header
+                                        if data.len() >= header.header_size {
+                                            data.drain(0..header.header_size);
+                                            println!("Stripped {} header ({} bytes)",
+                                                header.header_type, header.header_size);
+                                        }
+                                    }
+                                    HeaderType::None => {}
+                                }
+                            }
+
+                            match std::fs::write(&output_path, &data) {
+                                Ok(_) => {
+                                    if raw_mode {
+                                        println!("Exported {} ({} bytes, raw) to {}",
+                                            src_filename, original_size, output_path);
+                                    } else {
+                                        println!("Exported {} ({} bytes) to {}",
+                                            src_filename, data.len(), output_path);
+                                    }
+                                }
+                                Err(e) => println!("Error writing file: {}", e),
+                            }
+                        }
+                        Err(e) => println!("Error reading file: {}", e),
                     }
                 } else {
                     println!("No image loaded.");
+                }
+            }
+            "fs-switch" => {
+                if parts.len() < 2 {
+                    // Show current mode
+                    let effective = if let Some(ref img) = image {
+                        match filesystem_mode {
+                            FileSystemType::Auto => img.format().default_filesystem(),
+                            other => other,
+                        }
+                    } else {
+                        filesystem_mode
+                    };
+                    println!("Filesystem mode: {} (effective: {})", filesystem_mode, effective);
+                    println!("Options: auto, cpm, mgt");
+                } else {
+                    match FileSystemType::from_str(&parts[1]) {
+                        Some(mode) => {
+                            filesystem_mode = mode;
+                            println!("Filesystem mode set to: {}", filesystem_mode);
+                        }
+                        None => {
+                            println!("Unknown filesystem type: {}", parts[1]);
+                            println!("Options: auto, cpm, mgt");
+                        }
+                    }
                 }
             }
             "save" => {
@@ -594,17 +675,18 @@ fn parse_command_line(input: &str) -> Vec<String> {
 
 fn print_help() {
     println!("Available commands:");
-    println!("  open <path>                    - Open a DSK file (use quotes for paths with spaces)");
+    println!("  open <path>                    - Open a disk image file (use quotes for paths with spaces)");
     println!("  create [amstrad|spectrum|pcw]  - Create a new DSK image");
     println!("  info                           - Show disk information");
     println!("  tracks                         - List all tracks");
     println!("  sectors [track] [side]         - List sectors (all or specific track/side)");
     println!("  read-sector <s> <t> <id>       - Read and display a sector");
-    println!("  fs-mount                       - Mount CP/M filesystem");
-    println!("  fs-list                        - List files on CP/M filesystem");
-    println!("  fs-read <filename>             - Read file from CP/M filesystem");
+    println!("  fs-mount                       - Mount filesystem and show info");
+    println!("  fs-list                        - List files on disk");
+    println!("  fs-read <filename>             - Read and hex dump file from disk");
     println!("  fs-export <file> [output] [raw] - Export file from disk to host filesystem");
     println!("                                    (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
+    println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
     println!("  detect-protection              - Detect copy protection scheme");
     println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
@@ -615,8 +697,11 @@ fn print_help() {
     println!("  quit, exit                     - Exit");
 }
 
-fn print_info(image: &DskImage) {
+fn print_info(image: &DiskImage) {
     println!("=== Disk Information ===");
+    if let Some(filename) = image.filename() {
+        println!("Filename: {}", filename);
+    }
     println!("Format: {}", image.format().name());
     println!("Sides: {}", image.spec().num_sides);
     println!("Tracks per side: {}", image.spec().num_tracks);
@@ -627,7 +712,7 @@ fn print_info(image: &DskImage) {
     println!("Changed: {}", if image.is_changed() { "Yes" } else { "No" });
 }
 
-fn list_tracks(image: &DskImage) {
+fn list_tracks(image: &DiskImage) {
     println!("=== Tracks ===");
     for (side_idx, disk) in image.disks().iter().enumerate() {
         println!("\nSide {}:", side_idx);
@@ -658,7 +743,7 @@ fn list_tracks(image: &DskImage) {
     }
 }
 
-fn list_sectors_on_track(image: &DskImage, side: u8, track: u8) {
+fn list_sectors_on_track(image: &DiskImage, side: u8, track: u8) {
     if let Some(disk) = image.disks().get(side as usize) {
         if let Some(track_data) = disk.get_track(track) {
             println!("=== Sectors on Side {}, Track {} ===", side, track);
@@ -695,7 +780,7 @@ fn list_sectors_on_track(image: &DskImage, side: u8, track: u8) {
     }
 }
 
-fn list_all_sectors(image: &DskImage) {
+fn list_all_sectors(image: &DiskImage) {
     println!("=== All Sectors ===");
 
     for (side_idx, disk) in image.disks().iter().enumerate() {
@@ -780,7 +865,7 @@ fn parse_hex_or_dec(s: &str) -> Option<u8> {
     }
 }
 
-fn find_lowest_sector_id(image: &DskImage, side: u8, track: u8) -> Option<u8> {
+fn find_lowest_sector_id(image: &DiskImage, side: u8, track: u8) -> Option<u8> {
     let disk = image.disks().get(side as usize)?;
     let track_data = disk.get_track(track)?;
     track_data
@@ -877,7 +962,7 @@ struct StringHit {
 }
 
 /// Find strings in a disk, iterating in logical order
-fn find_strings_in_disk(image: &DskImage, min_length: usize, min_unique: usize, charset: &[u8]) -> Vec<StringHit> {
+fn find_strings_in_disk(image: &DiskImage, min_length: usize, min_unique: usize, charset: &[u8]) -> Vec<StringHit> {
     let mut hits = Vec::new();
     let spec = image.spec();
 

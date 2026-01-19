@@ -3,7 +3,7 @@
 /// This module provides detection and representation of disk specifications
 /// used by CP/M and compatible systems (Amstrad PCW, CPC, Spectrum +3, etc.)
 
-use crate::image::DskImage;
+use crate::image::DiskImage;
 use std::fmt;
 
 /// Disk format type
@@ -235,7 +235,7 @@ impl DiskSpecification {
     }
 
     /// Identify the disk specification from a disk image
-    pub fn identify(image: &DskImage) -> Self {
+    pub fn identify(image: &DiskImage) -> Self {
         let mut spec = Self::new();
 
         // Try to detect format from disk structure
@@ -411,7 +411,7 @@ impl DiskSpecification {
 }
 
 /// Detect disk format from structure (sector IDs, sizes, etc.)
-fn detect_format_from_structure(image: &DskImage) -> Option<String> {
+fn detect_format_from_structure(image: &DiskImage) -> Option<String> {
     let disk = image.get_disk(0)?;
     let track = disk.get_track(0)?;
 
@@ -463,7 +463,7 @@ fn detect_format_from_structure(image: &DskImage) -> Option<String> {
 }
 
 /// Get the first logical sector (lowest sector ID on track 0)
-fn get_first_logical_sector(image: &DskImage) -> Option<(u8, Vec<u8>)> {
+fn get_first_logical_sector(image: &DiskImage) -> Option<(u8, Vec<u8>)> {
     let disk = image.get_disk(0)?;
     let track = disk.get_track(0)?;
 

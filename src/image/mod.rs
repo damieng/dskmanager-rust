@@ -9,52 +9,67 @@ pub mod sector;
 /// Track definition and data rate
 pub mod track;
 
-pub use builder::DskImageBuilder;
+pub use builder::DiskImageBuilder;
 pub use disk::Disk;
 pub use sector::{Sector, SectorId, SectorStatus};
 pub use track::{DataRate, RecordingMode, Track};
 
 use crate::error::{DskError, Result};
-use crate::format::{DskFormat, FormatSpec, SideMode};
+use crate::format::{DiskImageFormat, FormatSpec, SideMode};
 use std::path::Path;
 
 /// Main DSK image container
 #[derive(Debug, Clone)]
-pub struct DskImage {
-    /// DSK format type (Standard or Extended)
-    pub(crate) format: DskFormat,
+pub struct DiskImage {
+    /// DSK format type (Standard, Extended, or RawMgt)
+    pub(crate) format: DiskImageFormat,
     /// Format specification
     pub(crate) spec: FormatSpec,
     /// Disks (one per side)
     pub(crate) disks: Vec<Disk>,
     /// Has the image been modified?
     pub(crate) changed: bool,
+    /// Original filename if loaded from disk
+    pub(crate) filename: Option<String>,
 }
 
-impl DskImage {
-    /// Open a DSK file from disk
+impl DiskImage {
+    /// Open a DSK or MGT file from disk
+    ///
+    /// Automatically detects file type based on extension:
+    /// - `.mgt` files are read as raw MGT format
+    /// - All other extensions are read as DSK format
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        crate::io::reader::read_dsk(path)
+        if crate::io::is_mgt_file(&path) {
+            crate::io::read_mgt(path)
+        } else {
+            crate::io::reader::read_dsk(path)
+        }
     }
 
     /// Create a new DSK image with the given specification
     pub fn create(spec: FormatSpec) -> Result<Self> {
-        DskImageBuilder::new().spec(spec).build()
+        DiskImageBuilder::new().spec(spec).build()
     }
 
     /// Create a new builder for constructing DSK images
-    pub fn builder() -> DskImageBuilder {
-        DskImageBuilder::new()
+    pub fn builder() -> DiskImageBuilder {
+        DiskImageBuilder::new()
     }
 
     /// Get the format type
-    pub fn format(&self) -> DskFormat {
+    pub fn format(&self) -> DiskImageFormat {
         self.format
     }
 
     /// Get the format specification
     pub fn spec(&self) -> &FormatSpec {
         &self.spec
+    }
+
+    /// Get the original filename if loaded from disk
+    pub fn filename(&self) -> Option<&str> {
+        self.filename.as_deref()
     }
 
     /// Get all disks (sides)
@@ -187,9 +202,9 @@ impl DskImage {
     /// # Example
     ///
     /// ```no_run
-    /// use dskmanager::DskImage;
+    /// use dskmanager::DiskImage;
     ///
-    /// let image = DskImage::open("disk.dsk")?;
+    /// let image = DiskImage::open("disk.dsk")?;
     /// let data = image.read_logical();
     /// println!("Read {} bytes in logical order", data.len());
     /// # Ok::<(), dskmanager::DskError>(())
@@ -251,16 +266,16 @@ mod tests {
     #[test]
     fn test_create_image() {
         let spec = FormatSpec::amstrad_system();
-        let image = DskImage::create(spec).unwrap();
+        let image = DiskImage::create(spec).unwrap();
 
-        assert_eq!(image.format(), DskFormat::Standard);
+        assert_eq!(image.format(), DiskImageFormat::StandardDSK);
         assert_eq!(image.disk_count(), 1);
         assert!(image.is_changed());
     }
 
     #[test]
     fn test_builder() {
-        let image = DskImage::builder()
+        let image = DiskImage::builder()
             .num_sides(2)
             .num_tracks(40)
             .build()
@@ -271,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_get_disk() {
-        let image = DskImage::builder().num_sides(2).build().unwrap();
+        let image = DiskImage::builder().num_sides(2).build().unwrap();
 
         assert!(image.get_disk(0).is_some());
         assert!(image.get_disk(1).is_some());
@@ -280,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_read_write_sector() {
-        let mut image = DskImage::builder()
+        let mut image = DiskImage::builder()
             .num_sides(1)
             .num_tracks(2)
             .sectors_per_track(3)
@@ -301,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_read_invalid_sector() {
-        let image = DskImage::builder().build().unwrap();
+        let image = DiskImage::builder().build().unwrap();
 
         let result = image.read_sector(0, 0, 0xFF);
         assert!(result.is_err());
@@ -309,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_write_invalid_track() {
-        let mut image = DskImage::builder().num_tracks(10).build().unwrap();
+        let mut image = DiskImage::builder().num_tracks(10).build().unwrap();
 
         let data = vec![0; 512];
         let result = image.write_sector(0, 50, 0xC1, &data);
@@ -318,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_capacity() {
-        let image = DskImage::builder()
+        let image = DiskImage::builder()
             .num_sides(2)
             .num_tracks(40)
             .sectors_per_track(9)

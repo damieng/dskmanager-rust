@@ -6,7 +6,7 @@ use crate::filesystem::{
     FileSystemInfo,
 };
 use crate::format::{AllocationSize, DiskSpecification};
-use crate::image::DskImage;
+use crate::image::DiskImage;
 use std::collections::HashMap;
 
 /// CP/M directory entry (32 bytes)
@@ -223,14 +223,14 @@ impl CpmDirEntry {
 
 /// CP/M filesystem implementation using disk specification
 pub struct CpmFileSystem<'a> {
-    image: &'a DskImage,
+    image: &'a DiskImage,
     spec: DiskSpecification,
     directory_entries: Vec<CpmDirEntry>,
 }
 
 impl<'a> CpmFileSystem<'a> {
     /// Create a new CP/M filesystem from an image using a detected specification
-    pub fn new(image: &'a DskImage, spec: DiskSpecification) -> Result<Self> {
+    pub fn new(image: &'a DiskImage, spec: DiskSpecification) -> Result<Self> {
         let directory_entries = Self::read_directory(image, &spec)?;
 
         Ok(Self {
@@ -241,13 +241,13 @@ impl<'a> CpmFileSystem<'a> {
     }
 
     /// Read the directory entries from the disk
-    fn read_directory(image: &DskImage, spec: &DiskSpecification) -> Result<Vec<CpmDirEntry>> {
+    fn read_directory(image: &DiskImage, spec: &DiskSpecification) -> Result<Vec<CpmDirEntry>> {
         Self::read_directory_internal(image, spec, false)
     }
 
     /// Read the directory entries from the disk, optionally including deleted entries
     fn read_directory_internal(
-        image: &DskImage,
+        image: &DiskImage,
         spec: &DiskSpecification,
         include_deleted: bool,
     ) -> Result<Vec<CpmDirEntry>> {
@@ -282,7 +282,7 @@ impl<'a> CpmFileSystem<'a> {
 
     /// Read raw directory data from disk
     fn read_directory_data(
-        image: &DskImage,
+        image: &DiskImage,
         spec: &DiskSpecification,
         max_entries: usize,
     ) -> Result<Vec<u8>> {
@@ -539,7 +539,7 @@ impl<'a> CpmFileSystem<'a> {
 
 impl CpmFileSystem<'_> {
     /// Create a CP/M filesystem from an image, auto-detecting the specification
-    pub fn from_image(image: &DskImage) -> Result<CpmFileSystem<'_>> {
+    pub fn from_image(image: &DiskImage) -> Result<CpmFileSystem<'_>> {
         // Use DiskSpecification to detect the disk format
         let spec = DiskSpecification::identify(image);
 
@@ -553,7 +553,7 @@ impl CpmFileSystem<'_> {
 }
 
 impl<'a> FileSystem for CpmFileSystem<'a> {
-    fn from_image<'b>(_image: &'b DskImage) -> Result<Self>
+    fn from_image<'b>(_image: &'b DiskImage) -> Result<Self>
     where
         Self: Sized,
     {
@@ -562,7 +562,7 @@ impl<'a> FileSystem for CpmFileSystem<'a> {
         ))
     }
 
-    fn from_image_mut<'b>(_image: &'b mut DskImage) -> Result<Self>
+    fn from_image_mut<'b>(_image: &'b mut DiskImage) -> Result<Self>
     where
         Self: Sized,
     {

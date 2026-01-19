@@ -1,26 +1,26 @@
 /// Builder for creating DSK images
 
 use crate::error::Result;
-use crate::format::{DskFormat, FormatSpec};
-use crate::image::{Disk, DskImage, Sector, SectorId, Track};
+use crate::format::{DiskImageFormat, FormatSpec};
+use crate::image::{Disk, DiskImage, Sector, SectorId, Track};
 
 /// Builder for constructing DSK images
-pub struct DskImageBuilder {
-    format: DskFormat,
+pub struct DiskImageBuilder {
+    format: DiskImageFormat,
     spec: FormatSpec,
 }
 
-impl DskImageBuilder {
+impl DiskImageBuilder {
     /// Create a new builder with default values
     pub fn new() -> Self {
         Self {
-            format: DskFormat::Standard,
+            format: DiskImageFormat::StandardDSK,
             spec: FormatSpec::amstrad_data(),
         }
     }
 
     /// Set the DSK format
-    pub fn format(mut self, format: DskFormat) -> Self {
+    pub fn format(mut self, format: DiskImageFormat) -> Self {
         self.format = format;
         self
     }
@@ -56,7 +56,7 @@ impl DskImageBuilder {
     }
 
     /// Build the DSK image with the specified configuration
-    pub fn build(self) -> Result<DskImage> {
+    pub fn build(self) -> Result<DiskImage> {
         let mut disks = Vec::with_capacity(self.spec.num_sides as usize);
 
         // Create disks (one per side)
@@ -98,16 +98,17 @@ impl DskImageBuilder {
             disks.push(disk);
         }
 
-        Ok(DskImage {
+        Ok(DiskImage {
             format: self.format,
             spec: self.spec,
             disks,
             changed: true, // Newly created image is considered changed
+            filename: None,
         })
     }
 }
 
-impl Default for DskImageBuilder {
+impl Default for DiskImageBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -119,17 +120,17 @@ mod tests {
 
     #[test]
     fn test_builder_default() {
-        let image = DskImageBuilder::new().build().unwrap();
+        let image = DiskImageBuilder::new().build().unwrap();
 
-        assert_eq!(image.format(), DskFormat::Standard);
+        assert_eq!(image.format(), DiskImageFormat::StandardDSK);
         assert_eq!(image.spec().num_sides, 1);
         assert_eq!(image.spec().num_tracks, 40);
     }
 
     #[test]
     fn test_builder_custom() {
-        let image = DskImageBuilder::new()
-            .format(DskFormat::Extended)
+        let image = DiskImageBuilder::new()
+            .format(DiskImageFormat::ExtendedDSK)
             .num_sides(2)
             .num_tracks(80)
             .sectors_per_track(9)
@@ -137,7 +138,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(image.format(), DskFormat::Extended);
+        assert_eq!(image.format(), DiskImageFormat::ExtendedDSK);
         assert_eq!(image.spec().num_sides, 2);
         assert_eq!(image.spec().num_tracks, 80);
         assert_eq!(image.disk_count(), 2);
@@ -146,7 +147,7 @@ mod tests {
     #[test]
     fn test_builder_with_spec() {
         let spec = FormatSpec::spectrum_plus3();
-        let image = DskImageBuilder::new().spec(spec.clone()).build().unwrap();
+        let image = DiskImageBuilder::new().spec(spec.clone()).build().unwrap();
 
         assert_eq!(image.spec().first_sector_id, spec.first_sector_id);
         assert_eq!(image.spec().num_tracks, spec.num_tracks);
@@ -154,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_builder_creates_sectors() {
-        let image = DskImageBuilder::new()
+        let image = DiskImageBuilder::new()
             .num_sides(1)
             .num_tracks(2)
             .sectors_per_track(3)

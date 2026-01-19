@@ -1,11 +1,55 @@
 /// Filesystem implementations
 
+/// CP/M filesystem implementation
 pub mod cpm;
+/// DISCiPLE/+D filesystem implementation (ZX Spectrum)
+pub mod disciple;
+/// MGT filesystem base implementation
+pub mod mgt;
+/// SAM Coupe filesystem implementation
+pub mod sam;
 
 pub use cpm::CpmFileSystem;
+pub use disciple::DiscipleFileSystem;
+pub use mgt::{MgtDirEntry, MgtFileSystem, MgtFileType, MgtSystemType};
+pub use sam::SamFileSystem;
 
 use crate::error::Result;
-use crate::image::DskImage;
+use crate::image::DiskImage;
+
+/// Filesystem type for disk operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileSystemType {
+    /// Auto-detect filesystem based on disk specification
+    #[default]
+    Auto,
+    /// CP/M filesystem (Amstrad CPC, Spectrum +3, PCW, etc.)
+    Cpm,
+    /// MGT filesystem (DISCiPLE/+D, SAM Coupe)
+    Mgt,
+}
+
+impl std::fmt::Display for FileSystemType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileSystemType::Auto => write!(f, "Auto"),
+            FileSystemType::Cpm => write!(f, "CP/M"),
+            FileSystemType::Mgt => write!(f, "MGT"),
+        }
+    }
+}
+
+impl FileSystemType {
+    /// Parse from string (case-insensitive)
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "auto" => Some(FileSystemType::Auto),
+            "cpm" | "cp/m" => Some(FileSystemType::Cpm),
+            "mgt" | "disciple" | "sam" => Some(FileSystemType::Mgt),
+            _ => None,
+        }
+    }
+}
 
 /// File attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,10 +172,10 @@ pub struct FileSystemInfo {
 /// Filesystem trait for accessing files on DSK images
 pub trait FileSystem {
     /// Attempt to mount a filesystem from a DSK image (read-only)
-    fn from_image<'a>(image: &'a DskImage) -> Result<Self> where Self: Sized;
+    fn from_image<'a>(image: &'a DiskImage) -> Result<Self> where Self: Sized;
 
     /// Attempt to mount a filesystem from a DSK image (read-write)
-    fn from_image_mut<'a>(image: &'a mut DskImage) -> Result<Self> where Self: Sized;
+    fn from_image_mut<'a>(image: &'a mut DiskImage) -> Result<Self> where Self: Sized;
 
     /// List directory entries
     fn read_dir(&self) -> Result<Vec<DirEntry>>;

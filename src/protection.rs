@@ -867,9 +867,9 @@ fn detect_studio_b_discloc(disk: &Disk) -> Option<ProtectionResult> {
 /// # Example
 ///
 /// ```no_run
-/// use dskmanager::{DskImage, protection};
+/// use dskmanager::{DiskImage, protection};
 ///
-/// let image = DskImage::open("game.dsk")?;
+/// let image = DiskImage::open("game.dsk")?;
 /// if let Some(disk) = image.get_disk(0) {
 ///     if let Some(result) = protection::detect(disk) {
 ///         println!("Protection: {}", result);

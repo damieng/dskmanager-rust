@@ -3,15 +3,20 @@
 use crate::error::{DskError, Result};
 use crate::fdc::{FdcStatus1, FdcStatus2};
 use crate::format::constants::*;
-use crate::format::{detect_format, DskFormat, FormatSpec};
-use crate::image::{DataRate, Disk, DskImage, RecordingMode, Sector, SectorId, Track};
+use crate::format::{detect_format, DiskImageFormat, FormatSpec};
+use crate::image::{DataRate, Disk, DiskImage, RecordingMode, Sector, SectorId, Track};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 /// Read a DSK file from disk
-pub fn read_dsk<P: AsRef<Path>>(path: P) -> Result<DskImage> {
-    let mut file = File::open(path)?;
+pub fn read_dsk<P: AsRef<Path>>(path: P) -> Result<DiskImage> {
+    let filename = path.as_ref()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
+    let mut file = File::open(&path)?;
 
     // Read disk info block (256 bytes)
     let mut disk_info = vec![0u8; DISK_INFO_BLOCK_SIZE];
@@ -22,13 +27,14 @@ pub fn read_dsk<P: AsRef<Path>>(path: P) -> Result<DskImage> {
         .ok_or_else(|| DskError::invalid_format("Unknown DSK format"))?;
 
     match format {
-        DskFormat::Standard => read_standard_dsk(file, &disk_info),
-        DskFormat::Extended => read_extended_dsk(file, &disk_info),
+            DiskImageFormat::StandardDSK => read_standard_dsk(file, &disk_info, filename),
+            DiskImageFormat::ExtendedDSK => read_extended_dsk(file, &disk_info, filename),
+        DiskImageFormat::RawMgt => Err(DskError::invalid_format("RawMgt format should use read_mgt")),
     }
 }
 
 /// Read a Standard DSK file
-fn read_standard_dsk(mut file: File, disk_info: &[u8]) -> Result<DskImage> {
+fn read_standard_dsk(mut file: File, disk_info: &[u8], filename: Option<String>) -> Result<DiskImage> {
     // Parse disk info block
     let num_tracks = disk_info[DISK_INFO_TRACK_COUNT_OFFSET];
     let num_sides = disk_info[DISK_INFO_SIDE_COUNT_OFFSET];
@@ -54,16 +60,17 @@ fn read_standard_dsk(mut file: File, disk_info: &[u8]) -> Result<DskImage> {
     // Create format spec based on first track
     let spec = build_format_spec(&disks, num_sides, num_tracks);
 
-    Ok(DskImage {
-        format: DskFormat::Standard,
+    Ok(DiskImage {
+        format: DiskImageFormat::StandardDSK,
         spec,
         disks,
         changed: false,
+        filename,
     })
 }
 
 /// Read an Extended DSK file
-fn read_extended_dsk(mut file: File, disk_info: &[u8]) -> Result<DskImage> {
+fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>) -> Result<DiskImage> {
     // Parse disk info block
     let num_tracks = disk_info[DISK_INFO_TRACK_COUNT_OFFSET];
     let num_sides = disk_info[DISK_INFO_SIDE_COUNT_OFFSET];
@@ -106,11 +113,12 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8]) -> Result<DskImage> {
     // Create format spec
     let spec = build_format_spec(&disks, num_sides, num_tracks);
 
-    Ok(DskImage {
-        format: DskFormat::Extended,
+    Ok(DiskImage {
+        format: DiskImageFormat::ExtendedDSK,
         spec,
         disks,
         changed: false,
+        filename,
     })
 }
 

@@ -1,6 +1,6 @@
 # DSK Manager (Rust)
 
-An idiomatic Rust library and cli for reading and writing DSK disk image files with CP/M filesystem support.
+An idiomatic Rust library and cli for reading and writing DSK/MGT disk image files with CP/M and MGT filesystem support.
 
 ## Features
 
@@ -26,22 +26,22 @@ dskmanager = "0.1"
 ### Basic Usage
 
 ```rust
-use dskmanager::{DskImage, FormatSpec, CpmFileSystem, FileSystem};
+use dskmanager::{DiskImage, FormatSpec, CpmFileSystem, FileSystem};
 
 // Open an existing DSK file
-let image = DskImage::open("disk.dsk")?;
+let image = DiskImage::open("disk.dsk")?;
 
 // Read a sector
-let data = image.read_sector(0, 0, 193)?;
+let data = image.read_sector(0, 0, 0xC1)?;
 println!("Sector data: {} bytes", data.len());
 
 // Create a new DSK image
 let spec = FormatSpec::amstrad_data();
-let mut new_image = DskImage::create(spec)?;
+let mut new_image = DiskImage::create(spec)?;
 
 // Write a sector
 let data = vec![0xE5; 512];
-new_image.write_sector(0, 0, 193, &data)?;
+new_image.write_sector(0, 0, 0xC1, &data)?;
 
 // Save the image
 new_image.save("new_disk.dsk")?;
@@ -50,9 +50,9 @@ new_image.save("new_disk.dsk")?;
 ### Detecting Copy Protection
 
 ```rust
-use dskmanager::{DskImage, protection};
+use dskmanager::{DiskImage, protection};
 
-let image = DskImage::open("game.dsk")?;
+let image = DiskImage::open("game.dsk")?;
 
 // Check each side of the disk
 for (side_idx, disk) in image.disks().iter().enumerate() {
@@ -62,12 +62,12 @@ for (side_idx, disk) in image.disks().iter().enumerate() {
 }
 ```
 
-### Working with CP/M Filesystems
+### Working with Filesystems
 
 ```rust
-use dskmanager::{DskImage, CpmFileSystem};
+use dskmanager::{DiskImage, CpmFileSystem};
 
-let image = DskImage::open("cpm_disk.dsk")?;
+let image = DiskImage::open("cpm_disk.dsk")?;
 let fs = CpmFileSystem::from_image(&image)?;
 
 // List files
@@ -88,10 +88,10 @@ println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
 ### Using the Builder Pattern
 
 ```rust
-use dskmanager::{DskImage, DskFormat};
+use dskmanager::{DiskImage, DiskImageFormat};
 
-let image = DskImage::builder()
-    .format(DskFormat::Extended)
+let image = DiskImage::builder()
+    .format(DiskImageFormat::ExtendedDSK)
     .num_sides(2)
     .num_tracks(80)
     .sectors_per_track(9)
@@ -118,29 +118,33 @@ dsk
 
 Available commands:
 
-- `open <path>` - Open a DSK file
+- `open <path>` or `load <path>` - Open a DSK file
 - `create [amstrad|spectrum|pcw]` - Create a new DSK image
 - `info` - Show disk information
+- `specification` or `spec` - Show the disk specification used to understand the FS/layout
 - `tracks` - List all tracks
-- `read-sector <side> <track> <sector>` - Read and display a sector
-- `fs-mount` - Mount CP/M filesystem
-- `fs-list` - List files on CP/M filesystem
-- `fs-read <filename>` - Read file from CP/M filesystem
-- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips AMSDOS/PLUS3DOS headers by default, use `raw` to preserve)
+- `sectors` - List all sectors
+- `read-sector <side> <track> <sector>` - Read and display a sector (sector can be decimal or hex like 0xC1)
+- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips header by default, use 'raw' to keep them)
+- `fs-list` - List files on the filesystem (CAT/DIR)
+- `fs-mount` - Mount the file system
+- `fs-switch [auto|cpm|mgt]` - Switch between file systems. Defaults to `auto`, can also specify `cpm` or `mgt`
+- `fs-read <filename>` - Read file from filesystem
 - `detect-protection` - Detect copy protection schemes on the disk
-- `disassemble [track] [sector]` - Disassemble Z80 code from a sector
+- `disassemble [track] [sector]` or `dasm [track] [sector]` - Disassemble Z80 code from a sector
 - `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
 - `map [side]` - Visual sector map (▓=in-use, ░=empty, colored by status)
 - `save <path>` - Save image to file
 - `help` - Show help
-- `quit` - Exit
+- `quit` or `exit` - Exit
 
 ## Supported Formats
 
-### DSK File Formats
+### Disk Image File Formats
 
-- **Standard DSK**: Fixed track size format
-- **Extended DSK**: Variable track sizes with V5 extensions
+- **Standard DSK** (.DSK): Fixed track size format
+- **Extended DSK** (.DSK): Variable track sizes with SAMDisk V5 extensions
+- **MGT Raw** (.MGT): MGT Disciple/+D/SAM Coupe 800KB DSDD raw sector dumps
 
 ### Disk Formats
 
@@ -150,10 +154,16 @@ Presets for common formats:
 - ZX Spectrum +3 (40 tracks, 9 sectors, 512 bytes)
 - Amstrad PCW (40 tracks, 9 sectors, 512 bytes)
 - IBM PC 360K/720K (40/80 tracks, 9 sectors, 512 bytes)
+- Tatung Einstein
+- MGT Disciple/+D/SAM Coupe
 
 ### Filesystems
 
-- CP/M (read-only support for Amstrad CPC, Spectrum +3, PCW)
+- **CP/M** (read-only support for Amstrad CPC, Spectrum +3, PCW, Tatung Einstein)
+- **MGT** (read-only support for MGT Disciple/+D and SAM Coupe)
+  - `DiscipleFileSystem` - For ZX Spectrum DISCiPLE/+D disks
+  - `SamFileSystem` - For SAM Coupe disks
+  - `MgtFileSystem` - Base implementation for MGT format disks
 
 ### Copy Protection Detection
 
@@ -186,7 +196,7 @@ Detection works by analyzing disk geometry, FDC status codes, and searching for 
 The library uses an idiomatic Rust ownership-based design:
 
 ```
-DskImage (top-level)
+DiskImage (top-level)
   └─ Vec<Disk> (one per side)
       └─ Vec<Track>
           └─ Vec<Sector>
@@ -233,19 +243,10 @@ cargo doc --open
 
 The `dsk` binary provides an interactive console for exploring DSK files. Run it with `cargo run --bin dsk` or install it with `cargo install --path .`.
 
-## References
-
-Based on the Pascal/Lazarus implementation at https://github.com/damieng/DiskImageManager
-
-DSK format specifications:
-
-- Standard DSK: Fixed track size, simple header
-- Extended DSK: Variable track sizes, per-sector metadata
-- FDC status codes from NEC uPD765/Intel 8272
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0 at your convenience.
 
 ## Contributing
 
@@ -258,11 +259,20 @@ Contributions welcome! Please ensure:
 
 ## Roadmap
 
-Future enhancements:
+Future ideas:
 
-- [ ] CP/M filesystem write support
-- [ ] Tatung Einstein file system support
-- [ ] MGT filesystem support (Disciple/PlusD/SAM Coupe)
+- [ ] File system write support (import)
+- [ ] MGT file system completion for export
+- [ ] Wildcard matching for import and export
+- [ ] Header generation for import and existing files
+- [ ] Header stripping for existing files
+- [ ] Copy/Delete/Undelete support
+- [ ] Formatting including custom
+- [ ] Re-interleaving/skewing existing disk images
+- [ ] Defragmenting existing images
+- [ ] Super-optimizer for +3 disk images?
+- [ ] Boot sector extraction
+- [ ] Boot sector generation (+3 only)
 
 ## Acknowledgments
 

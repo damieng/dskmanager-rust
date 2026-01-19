@@ -1,6 +1,6 @@
 /// Sector map visualization
 
-use crate::image::{DskImage, SectorStatus};
+use crate::image::{DiskImage, SectorStatus};
 
 /// ANSI color codes for sector map
 mod colors {
@@ -14,7 +14,7 @@ mod colors {
 }
 
 /// Draw a visual sector map for a disk side
-pub fn draw_sector_map(image: &DskImage, side: usize) {
+pub fn draw_sector_map(image: &DiskImage, side: usize) {
     let disk = match image.disks().get(side) {
         Some(d) => d,
         None => {
