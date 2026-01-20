@@ -6,44 +6,6 @@
 use crate::image::DiskImage;
 use std::fmt;
 
-/// Disk format type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiskSpecFormat {
-    /// Amstrad PCW/Spectrum +3 DD/SS/ST
-    PcwSingleSided,
-    /// Amstrad CPC DD/SS/ST system format
-    CpcSystem,
-    /// Amstrad CPC DD/SS/ST data format
-    CpcData,
-    /// Amstrad PCW DD/DS/DT
-    PcwDoubleSided,
-    /// Amstrad PCW/+3 DD/SS/ST (Assumed from disk structure)
-    AssumedPcwSingleSided,
-    /// Tatung Einstein
-    Einstein,
-    /// MGT Sam Coupe
-    Mgt,
-    /// Timex/Sinclair TS2068
-    Ts2068,
-    /// Invalid or unrecognized format
-    Invalid,
-}
-
-impl fmt::Display for DiskSpecFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DiskSpecFormat::PcwSingleSided => write!(f, "Amstrad PCW/+3 DD/SS/ST"),
-            DiskSpecFormat::CpcSystem => write!(f, "Amstrad CPC DD/SS/ST system"),
-            DiskSpecFormat::CpcData => write!(f, "Amstrad CPC DD/SS/ST data"),
-            DiskSpecFormat::PcwDoubleSided => write!(f, "Amstrad PCW DD/DS/DT"),
-            DiskSpecFormat::AssumedPcwSingleSided => write!(f, "Amstrad PCW/+3 DD/SS/ST (Assumed)"),
-            DiskSpecFormat::Einstein => write!(f, "Tatung Einstein"),
-            DiskSpecFormat::Mgt => write!(f, "MGT Sam Coupe"),
-            DiskSpecFormat::Ts2068 => write!(f, "Timex/Sinclair TS2068"),
-            DiskSpecFormat::Invalid => write!(f, "Invalid"),
-        }
-    }
-}
 
 /// Side configuration for double-sided disks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,8 +78,8 @@ impl fmt::Display for AllocationSize {
 pub struct DiskSpecification {
     /// How this specification was determined
     pub source: String,
-    /// Disk format type
-    pub format: DiskSpecFormat,
+    /// Disk format name
+    pub format: String,
     /// Side configuration
     pub side: DiskSpecSide,
     /// Track density
@@ -150,7 +112,7 @@ impl Default for DiskSpecification {
     fn default() -> Self {
         Self {
             source: String::new(),
-            format: DiskSpecFormat::AssumedPcwSingleSided,
+            format: "Amstrad PCW/+3 DD/SS/ST (Assumed)".to_string(),
             side: DiskSpecSide::Single,
             track: DiskSpecTrack::Single,
             tracks_per_side: 40,
@@ -166,6 +128,382 @@ impl Default for DiskSpecification {
             allocation_size: AllocationSize::Byte,
         }
     }
+}
+
+/// Trait for format detectors that can identify disk specifications
+pub trait FormatDetector {
+    /// Attempt to detect and return a disk specification for the given image.
+    /// Returns `Some(DiskSpecification)` if this detector can handle the disk,
+    /// or `None` if it cannot.
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification>;
+}
+
+/// Amstrad PCW format detector
+pub struct AmstradPCW;
+
+impl FormatDetector for AmstradPCW {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let first_sector = get_first_logical_sector(image)?;
+        let (_, sector_data) = first_sector;
+
+        if sector_data.len() < 10 {
+            return None;
+        }
+
+        // Check if first 10 bytes are all the same value (blank spec block)
+        let check_byte = sector_data[0];
+        let all_same = sector_data[..10].iter().all(|&b| b == check_byte);
+        if all_same {
+            let mut spec = DiskSpecification::new();
+            spec.set_defaults();
+            spec.source = format!("Sector 0 spec block is all 0x{:02X}", check_byte);
+            spec.update_allocation_size();
+            return Some(spec);
+        }
+
+        // Check format byte
+        match sector_data[0] {
+            0 => {
+                // PCW Single Sided
+                let mut spec = DiskSpecification::new();
+                spec.format = "Amstrad PCW/+3 DD/SS/ST".to_string();
+                spec.source = "Sector 0 spec block (format byte 0)".to_string();
+                parse_spec_block(&mut spec, &sector_data);
+                spec.update_allocation_size();
+                Some(spec)
+            }
+            3 => {
+                // PCW Double Sided
+                let mut spec = DiskSpecification::new();
+                spec.format = "Amstrad PCW DD/DS/DT".to_string();
+                spec.source = "Sector 0 spec block (format byte 3)".to_string();
+                parse_spec_block(&mut spec, &sector_data);
+                spec.update_allocation_size();
+                Some(spec)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Amstrad CPC System format detector
+pub struct AmstradCPCSystem;
+
+impl FormatDetector for AmstradCPCSystem {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let first_sector = get_first_logical_sector(image)?;
+        let (sector_id, sector_data) = first_sector;
+
+        // Check first sector ID for CPC System format
+        if sector_id == 0x41 {
+            let mut spec = DiskSpecification::new();
+            spec.set_defaults();
+            spec.source = "First logical sector has ID of 65 (0x41)".to_string();
+            spec.format = "Amstrad CPC DD/SS/ST system".to_string();
+            spec.reserved_tracks = 2;
+            spec.update_allocation_size();
+            return Some(spec);
+        }
+
+        // Check spec block format byte
+        if sector_data.len() >= 10 && sector_data[0] == 1 {
+            let mut spec = DiskSpecification::new();
+            spec.format = "Amstrad CPC DD/SS/ST system".to_string();
+            spec.source = "Sector 0 spec block (format byte 1)".to_string();
+            parse_spec_block(&mut spec, &sector_data);
+            spec.update_allocation_size();
+            Some(spec)
+        } else {
+            None
+        }
+    }
+}
+
+/// Amstrad CPC Data format detector
+pub struct AmstradCPCData;
+
+impl FormatDetector for AmstradCPCData {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let first_sector = get_first_logical_sector(image)?;
+        let (sector_id, sector_data) = first_sector;
+
+        // Check first sector ID for CPC Data format
+        if sector_id == 0xC1 {
+            let mut spec = DiskSpecification::new();
+            spec.set_defaults();
+            spec.source = "First logical sector has ID of 193 (0xC1)".to_string();
+            spec.format = "Amstrad CPC DD/SS/ST data".to_string();
+            spec.reserved_tracks = 0;
+            spec.update_allocation_size();
+            return Some(spec);
+        }
+
+        // Check spec block format byte
+        if sector_data.len() >= 10 && sector_data[0] == 2 {
+            let mut spec = DiskSpecification::new();
+            spec.format = "Amstrad CPC DD/SS/ST data".to_string();
+            spec.source = "Sector 0 spec block (format byte 2)".to_string();
+            parse_spec_block(&mut spec, &sector_data);
+            spec.update_allocation_size();
+            Some(spec)
+        } else {
+            None
+        }
+    }
+}
+
+/// Tatung Einstein format detector
+pub struct Einstein;
+
+impl FormatDetector for Einstein {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let first_sector = get_first_logical_sector(image)?;
+        let (_, data) = first_sector;
+
+        if data.len() >= 6 {
+            // Einstein boot sector signature: 00 E1 00 FB 00 FA
+            if data[0] == 0x00
+                && data[1] == 0xE1
+                && data[2] == 0x00
+                && data[3] == 0xFB
+                && data[4] == 0x00
+                && data[5] == 0xFA
+            {
+                let mut spec = DiskSpecification::new();
+                spec.format = "Tatung Einstein".to_string();
+                spec.source = "Signature 00 E1 00 FB 00 FA on first logical sector".to_string();
+                spec.sector_size = 512;
+                spec.sectors_per_track = 10;
+                spec.tracks_per_side = 40;
+                spec.block_shift = 4;
+                spec.reserved_tracks = 2;
+                spec.directory_blocks = 1;
+                spec.allocation_size = AllocationSize::Word;
+                spec.fdc_sector_size = 2;
+                return Some(spec);
+            }
+        }
+
+        None
+    }
+}
+
+/// MGT Sam Coupe format detector
+pub struct Mgt;
+
+impl FormatDetector for Mgt {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let disk = image.get_disk(0)?;
+        let track = disk.get_track(0)?;
+
+        // Check for MGT format: double-sided, 80 tracks, 10 sectors of 512 bytes
+        let total_tracks: usize = image.disks().iter().map(|d| d.track_count()).sum();
+        let is_double_sided = image.disk_count() == 2;
+        if is_double_sided && total_tracks >= 160 {
+            let sectors = track.sectors();
+            if sectors.len() == 10 {
+                let all_512 = sectors.iter().all(|s| s.advertised_size() == 512);
+                if all_512 {
+                    let mut spec = DiskSpecification::new();
+                    spec.format = "MGT Sam Coupe".to_string();
+                    spec.source = "Double sided 80 track 10 sectors of 512 bytes".to_string();
+                    spec.sector_size = 512;
+                    spec.sectors_per_track = 10;
+                    spec.tracks_per_side = 80;
+                    spec.side = DiskSpecSide::DoubleSuccessive;
+                    spec.track = DiskSpecTrack::Double;
+                    spec.reserved_tracks = 0;
+                    spec.directory_blocks = 4;
+                    spec.fdc_sector_size = 2;
+                    spec.update_allocation_size();
+                    return Some(spec);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Timex/Sinclair TS2068 format detector
+pub struct Ts2068;
+
+impl FormatDetector for Ts2068 {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let disk = image.get_disk(0)?;
+        let track = disk.get_track(0)?;
+
+        // Check for TS2068 format: 16 sectors of 256 bytes, starting at ID 0
+        let sectors = track.sectors();
+        if sectors.len() == 16 {
+            let all_256 = sectors.iter().all(|s| s.advertised_size() == 256);
+            let starts_at_0 = sectors.iter().any(|s| s.id.sector == 0);
+            if all_256 && starts_at_0 {
+                let mut spec = DiskSpecification::new();
+                spec.format = "Timex/Sinclair TS2068".to_string();
+                spec.source = "16x 256 byte sectors per track, starting ID 0".to_string();
+                spec.sector_size = 256;
+                spec.sectors_per_track = 16;
+                spec.tracks_per_side = 40;
+                spec.gap_read_write = 12;
+                spec.gap_format = 23;
+                spec.reserved_tracks = 2;
+                spec.directory_blocks = 1;
+                spec.fdc_sector_size = 1;
+                spec.update_allocation_size();
+                return Some(spec);
+            }
+        }
+
+        None
+    }
+}
+
+/// Assumed PCW Single Sided format detector (fallback for blank spec blocks)
+pub struct AssumedPcwSingleSided;
+
+impl FormatDetector for AssumedPcwSingleSided {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        // This detects blank spec blocks (all same byte)
+        let first_sector = get_first_logical_sector(image)?;
+        let (_, sector_data) = first_sector;
+
+        if sector_data.len() < 10 {
+            return None;
+        }
+
+        // Check if first 10 bytes are all the same value (blank spec block)
+        let check_byte = sector_data[0];
+        let all_same = sector_data[..10].iter().all(|&b| b == check_byte);
+        if all_same {
+            let mut spec = DiskSpecification::new();
+            spec.set_defaults();
+            spec.source = format!("Sector 0 spec block is all 0x{:02X}", check_byte);
+            spec.update_allocation_size();
+            Some(spec)
+        } else {
+            None
+        }
+    }
+}
+
+/// Invalid format detector (for unrecognized format bytes)
+pub struct InvalidFormat;
+
+impl FormatDetector for InvalidFormat {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        let first_sector = get_first_logical_sector(image)?;
+        let (_, sector_data) = first_sector;
+
+        if sector_data.len() < 10 {
+            return None;
+        }
+
+        // Check if we have a spec block with an invalid format byte
+        // Valid format bytes are 0, 1, 2, 3
+        let format_byte = sector_data[0];
+        if format_byte > 3 {
+            // Check if it's not a blank spec block (all same byte)
+            let check_byte = sector_data[0];
+            let all_same = sector_data[..10].iter().all(|&b| b == check_byte);
+            if !all_same {
+                let mut spec = DiskSpecification::new();
+                spec.format = "Invalid".to_string();
+                spec.source = format!("Unknown format byte: 0x{:02X}", format_byte);
+                return Some(spec);
+            }
+        }
+
+        None
+    }
+}
+
+/// Default fallback detector (always matches if image has sectors)
+pub struct DefaultFallback;
+
+impl FormatDetector for DefaultFallback {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        // This is the final fallback - if we have sectors but nothing else matched,
+        // return a default assumed PCW spec
+        if get_first_logical_sector(image).is_some() {
+            let mut spec = DiskSpecification::new();
+            spec.set_defaults();
+            spec.source = "Default fallback (no specific format detected)".to_string();
+            spec.update_allocation_size();
+            Some(spec)
+        } else {
+            None
+        }
+    }
+}
+
+/// Parse a spec block from sector data
+fn parse_spec_block(spec: &mut DiskSpecification, sector_data: &[u8]) {
+    if sector_data.len() < 10 {
+        return;
+    }
+
+    // Parse side configuration
+    spec.side = match sector_data[1] & 0x03 {
+        0 => DiskSpecSide::Single,
+        1 => DiskSpecSide::DoubleAlternate,
+        2 => DiskSpecSide::DoubleSuccessive,
+        _ => DiskSpecSide::Invalid,
+    };
+
+    // Parse track density
+    spec.track = if (sector_data[1] & 0x80) == 0x80 {
+        DiskSpecTrack::Double
+    } else {
+        DiskSpecTrack::Single
+    };
+
+    spec.tracks_per_side = sector_data[2];
+    spec.sectors_per_track = sector_data[3];
+
+    // Parse sector size (stored as log2(size) - 7)
+    let size_code = sector_data[4];
+    let calculated_size = 1u16 << (size_code + 7);
+    if calculated_size <= 8192 {
+        spec.sector_size = calculated_size;
+        spec.fdc_sector_size = size_code;
+    } else {
+        spec.sector_size = 0;
+    }
+
+    spec.reserved_tracks = sector_data[5];
+    spec.block_shift = sector_data[6];
+    spec.directory_blocks = sector_data[7];
+    spec.gap_read_write = sector_data[8];
+    spec.gap_format = sector_data[9];
+
+    if sector_data.len() > 15 {
+        spec.checksum = sector_data[15];
+    }
+}
+
+/// Identify the disk specification by trying all format detectors in order
+pub fn identify_specification(image: &DiskImage) -> Option<DiskSpecification> {
+    // Try detectors in order of specificity (most specific first)
+    let detectors: Vec<Box<dyn FormatDetector>> = vec![
+        Box::new(Einstein),
+        Box::new(Ts2068),
+        Box::new(Mgt),
+        Box::new(AmstradCPCSystem),
+        Box::new(AmstradCPCData),
+        Box::new(AmstradPCW),
+        Box::new(AssumedPcwSingleSided),
+        Box::new(InvalidFormat),
+        Box::new(DefaultFallback),
+    ];
+
+    for detector in detectors {
+        if let Some(spec) = detector.detect(image) {
+            return Some(spec);
+        }
+    }
+
+    None
 }
 
 impl DiskSpecification {
@@ -235,167 +573,29 @@ impl DiskSpecification {
     }
 
     /// Identify the disk specification from a disk image
+    /// 
+    /// This is a convenience method that calls `identify_specification`.
+    /// For more control, use `identify_specification` directly.
     pub fn identify(image: &DiskImage) -> Self {
-        let mut spec = Self::new();
-
-        // Try to detect format from disk structure
-        if let Some(detected) = detect_format_from_structure(image) {
-            match detected.as_str() {
-                "Einstein" => {
-                    spec.format = DiskSpecFormat::Einstein;
-                    spec.source = "Signature 00 E1 00 FB 00 FA on first logical sector".to_string();
-                    spec.sector_size = 512;
-                    spec.sectors_per_track = 10;
-                    spec.tracks_per_side = 40;
-                    spec.block_shift = 4;
-                    spec.reserved_tracks = 2;
-                    spec.directory_blocks = 1;
-                    spec.allocation_size = AllocationSize::Word;
-                    spec.fdc_sector_size = 2;
-                    return spec;
-                }
-                "TS2068" => {
-                    spec.format = DiskSpecFormat::Ts2068;
-                    spec.source = "16x 256 byte sectors per track, starting ID 0".to_string();
-                    spec.sector_size = 256;
-                    spec.sectors_per_track = 16;
-                    spec.tracks_per_side = 40;
-                    spec.gap_read_write = 12;
-                    spec.gap_format = 23;
-                    spec.reserved_tracks = 2;
-                    spec.directory_blocks = 1;
-                    spec.fdc_sector_size = 1;
-                    spec.update_allocation_size();
-                    return spec;
-                }
-                s if s.starts_with("MGT") => {
-                    spec.format = DiskSpecFormat::Mgt;
-                    spec.source = "Double sided 80 track 10 sectors of 512 bytes".to_string();
-                    spec.sector_size = 512;
-                    spec.sectors_per_track = 10;
-                    spec.tracks_per_side = 80;
-                    spec.side = DiskSpecSide::DoubleSuccessive;
-                    spec.track = DiskSpecTrack::Double;
-                    spec.reserved_tracks = 0;
-                    spec.directory_blocks = 4;
-                    spec.fdc_sector_size = 2;
-                    spec.update_allocation_size();
-                    return spec;
-                }
-                _ => {}
-            }
-        }
-
-        // Get the first logical sector
-        let first_sector = get_first_logical_sector(image);
-        if first_sector.is_none() {
-            spec.format = DiskSpecFormat::Invalid;
+        // Check if we have any sectors first
+        if get_first_logical_sector(image).is_none() {
+            let mut spec = Self::new();
+            spec.format = "Invalid".to_string();
             spec.source = "No sectors found".to_string();
             return spec;
         }
 
-        let (sector_id, sector_data) = first_sector.unwrap();
-
-        // Check first sector ID for CPC formats
-        match sector_id {
-            0x41 => {
-                // CPC System format (first sector ID = 65 = 0x41)
-                spec.set_defaults();
-                spec.source = "First logical sector has ID of 65 (0x41)".to_string();
-                spec.format = DiskSpecFormat::CpcSystem;
-                spec.reserved_tracks = 2;
-                spec.update_allocation_size();
-                return spec;
-            }
-            0xC1 => {
-                // CPC Data format (first sector ID = 193 = 0xC1)
-                spec.set_defaults();
-                spec.source = "First logical sector has ID of 193 (0xC1)".to_string();
-                spec.format = DiskSpecFormat::CpcData;
-                spec.reserved_tracks = 0;
-                spec.update_allocation_size();
-                return spec;
-            }
-            _ => {}
-        }
-
-        // Check if we have enough data
-        if sector_data.len() < 10 {
-            spec.format = DiskSpecFormat::Invalid;
-            spec.source = "First sector too small".to_string();
-            return spec;
-        }
-
-        // Check if first 10 bytes are all the same value (blank spec block)
-        let check_byte = sector_data[0];
-        let all_same = sector_data[..10].iter().all(|&b| b == check_byte);
-        if all_same {
-            spec.set_defaults();
-            spec.source = format!("Sector 0 spec block is all 0x{:02X}", check_byte);
-            spec.update_allocation_size();
-            return spec;
-        }
-
-        // Try to read the disk specification from the sector
-        spec.format = match sector_data[0] {
-            0 => DiskSpecFormat::PcwSingleSided,
-            1 => DiskSpecFormat::CpcSystem,
-            2 => DiskSpecFormat::CpcData,
-            3 => DiskSpecFormat::PcwDoubleSided,
-            _ => {
-                spec.format = DiskSpecFormat::Invalid;
-                spec.source = format!("Unknown format byte: 0x{:02X}", sector_data[0]);
-                return spec;
-            }
-        };
-
-        spec.source = "Sector 0 spec block".to_string();
-
-        // Parse side configuration
-        spec.side = match sector_data[1] & 0x03 {
-            0 => DiskSpecSide::Single,
-            1 => DiskSpecSide::DoubleAlternate,
-            2 => DiskSpecSide::DoubleSuccessive,
-            _ => DiskSpecSide::Invalid,
-        };
-
-        // Parse track density
-        spec.track = if (sector_data[1] & 0x80) == 0x80 {
-            DiskSpecTrack::Double
-        } else {
-            DiskSpecTrack::Single
-        };
-
-        spec.tracks_per_side = sector_data[2];
-        spec.sectors_per_track = sector_data[3];
-
-        // Parse sector size (stored as log2(size) - 7)
-        let size_code = sector_data[4];
-        let calculated_size = 1u16 << (size_code + 7);
-        if calculated_size <= 8192 {
-            spec.sector_size = calculated_size;
-            spec.fdc_sector_size = size_code;
-        } else {
-            spec.sector_size = 0;
-        }
-
-        spec.reserved_tracks = sector_data[5];
-        spec.block_shift = sector_data[6];
-        spec.directory_blocks = sector_data[7];
-        spec.gap_read_write = sector_data[8];
-        spec.gap_format = sector_data[9];
-
-        if sector_data.len() > 15 {
-            spec.checksum = sector_data[15];
-        }
-
-        spec.update_allocation_size();
-        spec
+        identify_specification(image).unwrap_or_else(|| {
+            let mut spec = Self::new();
+            spec.format = "Invalid".to_string();
+            spec.source = "No matching format detector found".to_string();
+            spec
+        })
     }
 
     /// Set default PCW/+3 values
     fn set_defaults(&mut self) {
-        self.format = DiskSpecFormat::AssumedPcwSingleSided;
+        self.format = "Amstrad PCW/+3 DD/SS/ST (Assumed)".to_string();
         self.side = DiskSpecSide::Single;
         self.track = DiskSpecTrack::Single;
         self.tracks_per_side = 40;
@@ -408,58 +608,6 @@ impl DiskSpecification {
         self.gap_read_write = 42;
         self.gap_format = 82;
     }
-}
-
-/// Detect disk format from structure (sector IDs, sizes, etc.)
-fn detect_format_from_structure(image: &DiskImage) -> Option<String> {
-    let disk = image.get_disk(0)?;
-    let track = disk.get_track(0)?;
-
-    if track.sector_count() == 0 {
-        return None;
-    }
-
-    // Check for Einstein signature
-    if let Some(first_sector) = get_first_logical_sector(image) {
-        let (_, data) = first_sector;
-        if data.len() >= 6 {
-            // Einstein boot sector signature: 00 E1 00 FB 00 FA
-            if data[0] == 0x00
-                && data[1] == 0xE1
-                && data[2] == 0x00
-                && data[3] == 0xFB
-                && data[4] == 0x00
-                && data[5] == 0xFA
-            {
-                return Some("Einstein".to_string());
-            }
-        }
-    }
-
-    // Check for TS2068 format: 16 sectors of 256 bytes, starting at ID 0
-    let sectors = track.sectors();
-    if sectors.len() == 16 {
-        let all_256 = sectors.iter().all(|s| s.advertised_size() == 256);
-        let starts_at_0 = sectors.iter().any(|s| s.id.sector == 0);
-        if all_256 && starts_at_0 {
-            return Some("TS2068".to_string());
-        }
-    }
-
-    // Check for MGT format: double-sided, 80 tracks, 10 sectors of 512 bytes
-    let total_tracks: usize = image.disks().iter().map(|d| d.track_count()).sum();
-    let is_double_sided = image.disk_count() == 2;
-    if is_double_sided && total_tracks >= 160 {
-        let sectors = track.sectors();
-        if sectors.len() == 10 {
-            let all_512 = sectors.iter().all(|s| s.advertised_size() == 512);
-            if all_512 {
-                return Some("MGT Sam Coupe".to_string());
-            }
-        }
-    }
-
-    None
 }
 
 /// Get the first logical sector (lowest sector ID on track 0)
@@ -505,7 +653,7 @@ mod tests {
     #[test]
     fn test_default_spec() {
         let spec = DiskSpecification::new();
-        assert_eq!(spec.format, DiskSpecFormat::AssumedPcwSingleSided);
+        assert_eq!(spec.format, "Amstrad PCW/+3 DD/SS/ST (Assumed)");
         assert_eq!(spec.side, DiskSpecSide::Single);
         assert_eq!(spec.tracks_per_side, 40);
         assert_eq!(spec.sectors_per_track, 9);
@@ -552,15 +700,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_display() {
-        assert_eq!(
-            format!("{}", DiskSpecFormat::PcwSingleSided),
-            "Amstrad PCW/+3 DD/SS/ST"
-        );
-        assert_eq!(
-            format!("{}", DiskSpecFormat::CpcSystem),
-            "Amstrad CPC DD/SS/ST system"
-        );
+    fn test_format_string() {
+        let mut spec = DiskSpecification::new();
+        spec.format = "Amstrad PCW/+3 DD/SS/ST".to_string();
+        assert_eq!(spec.format, "Amstrad PCW/+3 DD/SS/ST");
+        
+        spec.format = "Amstrad CPC DD/SS/ST system".to_string();
+        assert_eq!(spec.format, "Amstrad CPC DD/SS/ST system");
     }
 
     #[test]

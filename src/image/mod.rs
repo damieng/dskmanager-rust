@@ -16,7 +16,7 @@ pub use track::{DataRate, RecordingMode, Track};
 
 use crate::error::{DskError, Result};
 use crate::filesystem::FileSystemType;
-use crate::format::{DiskImageFormat, DiskSpecFormat, DiskSpecification, FormatSpec, SideMode};
+use crate::format::{DiskImageFormat, DiskSpecification, FormatSpec, SideMode};
 use std::path::Path;
 
 /// Main DSK image container
@@ -70,7 +70,7 @@ impl DiskImage {
     /// - Otherwise falls back to the image format's default filesystem
     pub fn default_filesystem(&self) -> FileSystemType {
         let spec = DiskSpecification::identify(self);
-        if spec.format == DiskSpecFormat::Mgt {
+        if spec.format == "MGT Sam Coupe" {
             FileSystemType::Mgt
         } else {
             self.format.default_filesystem()

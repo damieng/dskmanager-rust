@@ -10,7 +10,7 @@ pub mod specification;
 pub use constants::*;
 pub use spec::{FormatSpec, SideMode};
 pub use specification::{
-    AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification,
+    AllocationSize, DiskSpecSide, DiskSpecTrack, DiskSpecification,
 };
 
 use crate::filesystem::FileSystemType;

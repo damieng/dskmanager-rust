@@ -89,7 +89,7 @@ pub use filesystem::{
 };
 pub use filesystem::try_parse_header;
 pub use format::{
-    AllocationSize, DiskSpecFormat, DiskSpecSide, DiskSpecTrack, DiskSpecification, DiskImageFormat,
+    AllocationSize, DiskSpecSide, DiskSpecTrack, DiskSpecification, DiskImageFormat,
     FormatSpec, SideMode,
 };
 pub use image::{
