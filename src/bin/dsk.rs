@@ -3,6 +3,7 @@
 use dez80::Instruction;
 
 use dskmanager::*;
+use dskmanager::amstrad_basic::decode_amstrad_basic_file;
 use dskmanager::sinclair_basic::decode_sinclair_basic_file;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -400,7 +401,7 @@ fn main() {
                 if let Some(ref img) = image {
                     if parts.len() < 2 {
                         println!("Usage: fs-show <filename>");
-                        println!("  Shows PLUS3DOS BASIC files as text.");
+                        println!("  Shows AMSDOS and PLUS3DOS BASIC files as text.");
                         continue;
                     }
 
@@ -431,12 +432,22 @@ fn main() {
 
                     match data_result {
                         Ok(data) => {
-                            match decode_sinclair_basic_file(&data) {
+                            // Try Amstrad BASIC first (AMSDOS)
+                            match decode_amstrad_basic_file(&data) {
                                 Ok(Some(text)) => {
                                     print!("{}", text);
                                 }
                                 Ok(None) => {
-                                    println!("File '{}' is not a PLUS3DOS BASIC file.", parts[1]);
+                                    // Try Sinclair BASIC (PLUS3DOS)
+                                    match decode_sinclair_basic_file(&data) {
+                                        Ok(Some(text)) => {
+                                            print!("{}", text);
+                                        }
+                                        Ok(None) => {
+                                            println!("File '{}' is not a recognized BASIC file (AMSDOS or PLUS3DOS).", parts[1]);
+                                        }
+                                        Err(e) => println!("Error decoding BASIC: {}", e),
+                                    }
                                 }
                                 Err(e) => println!("Error decoding BASIC: {}", e),
                             }
@@ -750,7 +761,7 @@ fn print_help() {
     println!("  fs-info                        - Show filesystem information");
     println!("  fs-list                        - List files on disk");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
-    println!("  fs-show <filename>             - Display PLUS3DOS BASIC files as text");
+    println!("  fs-show <filename>             - Display AMSDOS and PLUS3DOS BASIC files as text");
     println!("  fs-export <file> [output_path] [raw] - Export file from disk to host filesystem");
     println!("                                         (output_path defaults to filename if not specified)");
     println!("                                         (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
