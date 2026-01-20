@@ -722,6 +722,18 @@ fn print_info(image: &DiskImage) {
     println!("Sectors per track: {}", image.spec().sectors_per_track);
     println!("Sector size: {} bytes", image.spec().sector_size);
     println!("First sector ID: {}", image.spec().first_sector_id);
+    
+    // Bootability detection
+    let boot_detection = BootDetection::detect(image);
+    if !boot_detection.system.is_empty() {
+        println!("Bootable on: {}", boot_detection.system);
+        println!("Reason: {}", boot_detection.reason);
+    } else {
+        println!("Bootable on: Not bootable");
+        if !boot_detection.reason.is_empty() {
+            println!("Reason: {}", boot_detection.reason);
+        }
+    }
 }
 
 fn list_tracks(image: &DiskImage) {

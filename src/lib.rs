@@ -62,6 +62,8 @@ The library supports both Standard and Extended DSK formats used by:
 
 #![warn(missing_docs)]
 
+/// Boot detection for disk images
+pub mod boot;
 /// Error types and Result alias
 pub mod error;
 /// FDC (Floppy Disk Controller) status codes
@@ -80,6 +82,7 @@ pub mod map;
 pub mod protection;
 
 // Re-export common types
+pub use boot::BootDetection;
 pub use error::{DskError, Result};
 pub use fdc::{FdcStatus1, FdcStatus2};
 pub use filesystem::{
