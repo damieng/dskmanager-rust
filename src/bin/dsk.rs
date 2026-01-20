@@ -3,6 +3,7 @@
 use dez80::Instruction;
 
 use dskmanager::*;
+use dskmanager::sinclair_basic::decode_sinclair_basic_file;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -25,9 +26,10 @@ impl CommandCompleter {
                 "disassemble",
                 "exit",
                 "fs-export",
-                "fs-list",
                 "fs-info",
+                "fs-list",
                 "fs-read",
+                "fs-show",
                 "fs-switch",
                 "help",
                 "info",
@@ -394,6 +396,57 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "fs-show" => {
+                if let Some(ref img) = image {
+                    if parts.len() < 2 {
+                        println!("Usage: fs-show <filename>");
+                        println!("  Shows PLUS3DOS BASIC files as text.");
+                        continue;
+                    }
+
+                    // Determine effective filesystem type
+                    let effective_fs = match filesystem_mode {
+                        FileSystemType::Auto => img.default_filesystem(),
+                        other => other,
+                    };
+
+                    // Read file with header (we need to check the header)
+                    let data_result: Result<Vec<u8>> = match effective_fs {
+                        FileSystemType::Mgt => {
+                            match DiscipleFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(&parts[1]),
+                                Err(e) => Err(e),
+                            }
+                        }
+                        FileSystemType::Cpm | FileSystemType::Auto => {
+                            match CpmFileSystem::from_image(img) {
+                                Ok(fs) => {
+                                    // Read with header to check if it's BASIC
+                                    fs.read_file_binary(&parts[1], true)
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                    };
+
+                    match data_result {
+                        Ok(data) => {
+                            match decode_sinclair_basic_file(&data) {
+                                Ok(Some(text)) => {
+                                    print!("{}", text);
+                                }
+                                Ok(None) => {
+                                    println!("File '{}' is not a PLUS3DOS BASIC file.", parts[1]);
+                                }
+                                Err(e) => println!("Error decoding BASIC: {}", e),
+                            }
+                        }
+                        Err(e) => println!("Error reading file: {}", e),
+                    }
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             "fs-export" => {
                 if let Some(ref img) = image {
                     if parts.len() < 2 {
@@ -697,6 +750,7 @@ fn print_help() {
     println!("  fs-info                        - Show filesystem information");
     println!("  fs-list                        - List files on disk");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
+    println!("  fs-show <filename>             - Display PLUS3DOS BASIC files as text");
     println!("  fs-export <file> [output_path] [raw] - Export file from disk to host filesystem");
     println!("                                         (output_path defaults to filename if not specified)");
     println!("                                         (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");

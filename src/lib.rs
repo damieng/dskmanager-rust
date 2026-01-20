@@ -62,6 +62,8 @@ The library supports both Standard and Extended DSK formats used by:
 
 #![warn(missing_docs)]
 
+/// Sinclair BASIC tokenized file decoder (ZX Spectrum, ZX81, etc.)
+pub mod sinclair_basic;
 /// Boot detection for disk images
 pub mod boot;
 /// Error types and Result alias
@@ -82,6 +84,7 @@ pub mod map;
 pub mod protection;
 
 // Re-export common types
+pub use sinclair_basic::{SinclairBasicMode, decode_sinclair_basic, decode_sinclair_basic_file, can_decode_sinclair_basic};
 pub use boot::BootDetection;
 pub use error::{DskError, Result};
 pub use fdc::{FdcStatus1, FdcStatus2};
