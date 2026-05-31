@@ -164,25 +164,124 @@ impl FormatDetector for AmstradPCW {
         // Check format byte
         match sector_data[0] {
             0 => {
-                // PCW Single Sided
+                // PCW Single Sided — refine into 9512 / Spectrum +3 / 8256 via
+                // mod-256 checksum of sector 0 (see DskImageManager FormatAnalysis.pas:63)
                 let mut spec = DiskSpecification::new();
-                spec.format = "Amstrad PCW/+3 DD/SS/ST".to_string();
+                let variant = match mod_checksum(&sector_data, 256) {
+                    1 => "Amstrad PCW 9512",
+                    3 => "Spectrum +3",
+                    255 => "Amstrad PCW 8256",
+                    _ => "Amstrad PCW/Spectrum +3",
+                };
+                let suffix = if image.disk_count() == 1 { "CF2" } else { "CF2DD" };
+                spec.format = format!("{} {}", variant, suffix);
                 spec.source = "Sector 0 spec block (format byte 0)".to_string();
                 parse_spec_block(&mut spec, &sector_data);
+                append_size_indicator(&mut spec, image);
                 spec.update_allocation_size();
                 Some(spec)
             }
             3 => {
                 // PCW Double Sided
                 let mut spec = DiskSpecification::new();
-                spec.format = "Amstrad PCW DD/DS/DT".to_string();
+                spec.format = "Amstrad PCW DD/DS/DT CF2DD".to_string();
                 spec.source = "Sector 0 spec block (format byte 3)".to_string();
                 parse_spec_block(&mut spec, &sector_data);
+                append_size_indicator(&mut spec, image);
                 spec.update_allocation_size();
                 Some(spec)
             }
             _ => None,
         }
+    }
+}
+
+/// Enhanced Spectrum +3 / PCW format detector
+///
+/// Detects custom 10-sector single-sided layouts that pack more data onto a
+/// standard 3" disk: HiForm 203 and Ultra 208 (Chris Pile), Ian High and
+/// Ian Max (Ian Collier's skewed variants), and Supermat 192 / XCF2 (Ian Cull).
+/// Ported from DskImageManager FormatAnalysis.pas:92-122.
+pub struct EnhancedPlus3;
+
+impl FormatDetector for EnhancedPlus3 {
+    fn detect(&self, image: &DiskImage) -> Option<DiskSpecification> {
+        if image.disk_count() != 1 {
+            return None;
+        }
+        let disk = image.get_disk(0)?;
+        let track0 = disk.get_track(0)?;
+        let t0_sectors = track0.sectors();
+        if t0_sectors.len() != 10 {
+            return None;
+        }
+
+        let first_logical = t0_sectors.iter().min_by_key(|s| s.id.sector)?;
+        let data = first_logical.data();
+        if data.len() <= 10 {
+            return None;
+        }
+
+        // Supermat 192 / XCF2 (Ian Cull) — distinct fingerprint, check first
+        if data[2] == 40 && data[7] == 3 && data[9] == 23 {
+            let mut spec = DiskSpecification::new();
+            spec.format = "Supermat 192/XCF2".to_string();
+            spec.source = "10 sector spec block matches Supermat (Ian Cull)".to_string();
+            parse_spec_block(&mut spec, data);
+            spec.update_allocation_size();
+            return Some(spec);
+        }
+
+        // HiForm / Ultra208 / Ian Collier family — 42 tracks, gap r/w = 12
+        if data[2] != 42 || data[8] != 12 {
+            return None;
+        }
+
+        // Sector ID at physical position 1 of track 0 — interleave marker
+        let t0_pos1_id = t0_sectors.get(1).map(|s| s.id.sector);
+        // Sector ID at physical position 0 of track 1 — track-to-track skew marker
+        let t1_pos0_id = disk
+            .get_track(1)
+            .and_then(|t| t.sectors().first())
+            .map(|s| s.id.sector);
+
+        let name = match data[5] {
+            0 => {
+                // Ultra 208 / Ian Max — 0 reserved tracks
+                if t0_pos1_id == Some(8) {
+                    match t1_pos0_id {
+                        Some(7) => "Ultra 208/Ian Max",
+                        Some(8) => "Maybe Ultra 208 or Ian Max (skew lost)",
+                        _ => "Maybe Ultra 208 or Ian Max (custom skew)",
+                    }
+                } else {
+                    "Possibly Ultra 208 or Ian Max (interleave lost)"
+                }
+            }
+            1 => {
+                // HiForm 203 / Ian High — 1 reserved track
+                if t0_pos1_id == Some(8) {
+                    match t1_pos0_id {
+                        Some(7) => "Ian High",
+                        Some(1) => "HiForm 203",
+                        _ => "Maybe HiForm 203 or Ian High (custom skew)",
+                    }
+                } else {
+                    "Possibly HiForm 203 or Ian High (interleave lost)"
+                }
+            }
+            _ => "Possibly HiForm or Ian High (unknown reserved tracks)",
+        };
+
+        let mut spec = DiskSpecification::new();
+        spec.format = name.to_string();
+        spec.source = format!(
+            "10 sector +3 spec block (tracks={}, reserved={}, gap r/w={})",
+            data[2], data[5], data[8]
+        );
+        parse_spec_block(&mut spec, data);
+        spec.update_allocation_size();
+        Some(spec)
     }
 }
 
@@ -304,8 +403,18 @@ impl FormatDetector for Mgt {
             if sectors.len() == 10 {
                 let all_512 = sectors.iter().all(|s| s.advertised_size() == 512);
                 if all_512 {
+                    // Identify DOS variant from first logical sector data
+                    let first_logical = sectors.iter().min_by_key(|s| s.id.sector);
+                    let dos = first_logical
+                        .map(|s| identify_mgt_dos(s.data()))
+                        .unwrap_or("");
+
                     let mut spec = DiskSpecification::new();
-                    spec.format = "MGT Sam Coupe".to_string();
+                    spec.format = if dos.is_empty() {
+                        "MGT Sam Coupe".to_string()
+                    } else {
+                        format!("MGT Sam Coupe {}", dos)
+                    };
                     spec.source = "Double sided 80 track 10 sectors of 512 bytes".to_string();
                     spec.sector_size = 512;
                     spec.sectors_per_track = 10;
@@ -322,6 +431,22 @@ impl FormatDetector for Mgt {
         }
 
         None
+    }
+}
+
+/// Identify MGT DOS variant from the first logical sector data.
+/// Matches DskImageManager FormatAnalysis.pas:129-136.
+fn identify_mgt_dos(data: &[u8]) -> &'static str {
+    if data.len() >= 236 && &data[232..236] == b"BDOS" {
+        return "BDOS";
+    }
+    if data.len() > 210 {
+        match data[210] {
+            0 | 255 => "SAMDOS",
+            _ => "MasterDOS",
+        }
+    } else {
+        ""
     }
 }
 
@@ -437,6 +562,29 @@ impl FormatDetector for DefaultFallback {
     }
 }
 
+/// Modular sum of the bytes of `data` (used to discriminate PCW disk variants).
+/// Mirrors `TDSKSector.GetModChecksum` in DskImageManager DskImage.pas:1631.
+fn mod_checksum(data: &[u8], modulus: u32) -> u32 {
+    data.iter().fold(0u32, |acc, &b| (acc + b as u32) % modulus)
+}
+
+/// Append " (oversized)" or " (undersized)" to a PCW-family spec's format
+/// label when the actual track count on side 0 differs from the standard 40.
+fn append_size_indicator(spec: &mut DiskSpecification, image: &DiskImage) {
+    let Some(disk) = image.get_disk(0) else { return };
+    let high_track_count = disk
+        .tracks()
+        .iter()
+        .rposition(|t| !t.is_empty())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if high_track_count > 40 {
+        spec.format.push_str(" (oversized)");
+    } else if high_track_count > 0 && high_track_count < 40 {
+        spec.format.push_str(" (undersized)");
+    }
+}
+
 /// Parse a spec block from sector data
 fn parse_spec_block(spec: &mut DiskSpecification, sector_data: &[u8]) {
     if sector_data.len() < 10 {
@@ -484,13 +632,17 @@ fn parse_spec_block(spec: &mut DiskSpecification, sector_data: &[u8]) {
 
 /// Identify the disk specification by trying all format detectors in order
 pub fn identify_specification(image: &DiskImage) -> Option<DiskSpecification> {
-    // Try detectors in order of specificity (most specific first)
+    // Try detectors in order of specificity (most specific first).
+    // EnhancedPlus3 runs before AmstradPCW because HiForm/Ultra208/etc. all
+    // present as format-byte-0 PCW disks; only the extra structural checks
+    // distinguish them.
     let detectors: Vec<Box<dyn FormatDetector>> = vec![
         Box::new(Einstein),
         Box::new(Ts2068),
         Box::new(Mgt),
         Box::new(AmstradCPCSystem),
         Box::new(AmstradCPCData),
+        Box::new(EnhancedPlus3),
         Box::new(AmstradPCW),
         Box::new(AssumedPcwSingleSided),
         Box::new(InvalidFormat),
@@ -716,5 +868,316 @@ mod tests {
             format!("{}", DiskSpecSide::DoubleAlternate),
             "Double (Alternate)"
         );
+    }
+
+    // --- Helpers for detector tests ---
+
+    use crate::image::{Disk, Sector, SectorId, Track};
+
+    /// Build an image with the given per-track sector IDs and per-sector data.
+    /// `tracks[t][s] = (sector_id, data)`. Single-sided. Empty data → 512-byte
+    /// 0xE5-filled sector.
+    fn make_image(num_sides: u8, tracks: Vec<Vec<(u8, Vec<u8>)>>) -> DiskImage {
+        let mut image = DiskImage::builder()
+            .num_sides(num_sides)
+            .num_tracks(tracks.len() as u8)
+            .build()
+            .unwrap();
+
+        for side in 0..num_sides {
+            let disk = image.get_disk_mut(side).unwrap();
+            *disk = Disk::new(side);
+            for (track_num, sector_list) in tracks.iter().enumerate() {
+                let mut track = Track::new(track_num as u8, side);
+                for (id, data) in sector_list {
+                    let sector_id = SectorId::new(track_num as u8, side, *id, 2);
+                    let body = if data.is_empty() {
+                        vec![0xE5; 512]
+                    } else {
+                        let mut v = data.clone();
+                        v.resize(512, 0xE5);
+                        v
+                    };
+                    track.add_sector(Sector::with_data(sector_id, body));
+                }
+                disk.add_track(track);
+            }
+        }
+        image
+    }
+
+    /// Build a spec block (first 16 bytes of sector 0) for the PCW/+3 family.
+    fn spec_block(
+        format_byte: u8,
+        sides_track_bits: u8,
+        tracks_per_side: u8,
+        sectors_per_track: u8,
+        size_code: u8,
+        reserved_tracks: u8,
+        block_shift: u8,
+        directory_blocks: u8,
+        gap_rw: u8,
+        gap_format: u8,
+    ) -> Vec<u8> {
+        let mut block = vec![0u8; 16];
+        block[0] = format_byte;
+        block[1] = sides_track_bits;
+        block[2] = tracks_per_side;
+        block[3] = sectors_per_track;
+        block[4] = size_code;
+        block[5] = reserved_tracks;
+        block[6] = block_shift;
+        block[7] = directory_blocks;
+        block[8] = gap_rw;
+        block[9] = gap_format;
+        block
+    }
+
+    // --- EnhancedPlus3 ---
+
+    #[test]
+    fn test_detect_hiform_203() {
+        // HiForm: 10 sectors, tracks=42, gap r/w=12, reserved=1, T0.S1.id=8, T1.S0.id=1
+        let spec_data = spec_block(0, 0, 42, 10, 2, 1, 4, 2, 12, 23);
+        let mut t0 = vec![(1, spec_data)];
+        for id in 2..=10 {
+            t0.push((id, vec![]));
+        }
+        // Track 0 physical positions: [0]=ID1, [1]=ID8 (skew)
+        // Reorder so physical position 1 has ID 8
+        let mut reordered = vec![t0[0].clone(), t0[7].clone()];
+        for (idx, s) in t0.into_iter().enumerate() {
+            if idx == 0 || idx == 7 {
+                continue;
+            }
+            reordered.push(s);
+        }
+        // Track 1: physical position 0 has ID 1 → HiForm 203
+        let mut t1 = Vec::new();
+        for id in 1..=10 {
+            t1.push((id, vec![]));
+        }
+
+        let image = make_image(1, vec![reordered, t1]);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "HiForm 203");
+        assert_eq!(spec.tracks_per_side, 42);
+        assert_eq!(spec.sectors_per_track, 10);
+        assert_eq!(spec.reserved_tracks, 1);
+    }
+
+    #[test]
+    fn test_detect_ian_high() {
+        // Ian High: same as HiForm but T1.S0.id = 7
+        let spec_data = spec_block(0, 0, 42, 10, 2, 1, 4, 2, 12, 23);
+        let t0: Vec<(u8, Vec<u8>)> = vec![
+            (1, spec_data),
+            (8, vec![]),
+            (2, vec![]),
+            (9, vec![]),
+            (3, vec![]),
+            (10, vec![]),
+            (4, vec![]),
+            (5, vec![]),
+            (6, vec![]),
+            (7, vec![]),
+        ];
+        let t1: Vec<(u8, Vec<u8>)> = vec![(7, vec![]), (8, vec![]), (9, vec![]), (10, vec![])];
+        let image = make_image(1, vec![t0, t1]);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "Ian High");
+    }
+
+    #[test]
+    fn test_detect_ultra_208() {
+        // Ultra 208: reserved=0, T0.S1.id=8, T1.S0.id=7
+        let spec_data = spec_block(0, 0, 42, 10, 2, 0, 4, 2, 12, 23);
+        let t0: Vec<(u8, Vec<u8>)> = vec![
+            (1, spec_data),
+            (8, vec![]),
+            (2, vec![]),
+            (3, vec![]),
+            (4, vec![]),
+            (5, vec![]),
+            (6, vec![]),
+            (7, vec![]),
+            (9, vec![]),
+            (10, vec![]),
+        ];
+        let t1: Vec<(u8, Vec<u8>)> = vec![(7, vec![]), (8, vec![])];
+        let image = make_image(1, vec![t0, t1]);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "Ultra 208/Ian Max");
+        assert_eq!(spec.reserved_tracks, 0);
+    }
+
+    #[test]
+    fn test_detect_supermat_192() {
+        // Supermat: 10 sectors, tracks=40, dir blocks=3, gap format=23
+        let spec_data = spec_block(0, 0, 40, 10, 2, 1, 4, 3, 12, 23);
+        let mut t0: Vec<(u8, Vec<u8>)> = vec![(1, spec_data)];
+        for id in 2..=10 {
+            t0.push((id, vec![]));
+        }
+        let image = make_image(1, vec![t0]);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "Supermat 192/XCF2");
+    }
+
+    #[test]
+    fn test_enhanced_plus3_interleave_lost() {
+        // HiForm spec block but T0.S1.id != 8 → interleave-lost variant
+        let spec_data = spec_block(0, 0, 42, 10, 2, 1, 4, 2, 12, 23);
+        let mut t0: Vec<(u8, Vec<u8>)> = vec![(1, spec_data)];
+        for id in 2..=10 {
+            t0.push((id, vec![]));
+        }
+        let image = make_image(1, vec![t0]);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "Possibly HiForm 203 or Ian High (interleave lost)");
+    }
+
+    // --- AmstradPCW refinements ---
+
+    #[test]
+    fn test_pcw_variant_spectrum_plus3() {
+        // mod-256 checksum of sector 0 must equal 3.
+        // Spec block format byte = 0 contributes 0 to the sum; sectors_per_track=9
+        // gives byte 3 = 9, and the rest of the 16-byte block sums to some value.
+        // Easiest: use known-empty rest, then pad with one byte to hit checksum=3.
+        let mut data = spec_block(0, 0, 40, 9, 2, 1, 3, 2, 42, 82);
+        // Sum so far: 0+0+40+9+2+1+3+2+42+82 = 181, plus 6 zeros = 181.
+        // 181 mod 256 = 181. We need final sum mod 256 = 3.
+        // Need to add bytes summing to (3 - 181) mod 256 = (3 + 75) mod 256 = ...
+        // actually (3 - 181 + 256) mod 256 = 78. Add 78 in one byte.
+        data.push(78);
+        // The full sector will be 512 bytes — remaining bytes are 0xE5.
+        // 0xE5 * (512 - 17) bytes adds (0xE5 * 495) mod 256.
+        // We need the full sector to sum to 3 mod 256.
+        // Simpler approach: build full 512-byte sector then patch byte 16 to fix checksum.
+        // Restart with the full sector:
+        let mut full = spec_block(0, 0, 40, 9, 2, 1, 3, 2, 42, 82);
+        full.resize(512, 0xE5);
+        let current: u32 = full.iter().fold(0u32, |acc, &b| (acc + b as u32) % 256);
+        // Patch byte 15 (the existing 0 in spec block) to make checksum = 3
+        let target = 3u32;
+        let delta = (target + 256 - current) % 256;
+        full[15] = (full[15] as u32 + delta) as u8 & 0xFF;
+
+        // Sanity check
+        let new_sum: u32 = full.iter().fold(0u32, |acc, &b| (acc + b as u32) % 256);
+        assert_eq!(new_sum % 256, 3);
+
+        let mut t0: Vec<(u8, Vec<u8>)> = vec![(1, full)];
+        for id in 2..=9 {
+            t0.push((id, vec![]));
+        }
+        // Fill out 40 tracks of dummy data so we don't get an oversized indicator
+        let mut tracks = vec![t0];
+        for _ in 1..40 {
+            let mut t = Vec::new();
+            for id in 1..=9 {
+                t.push((id, vec![]));
+            }
+            tracks.push(t);
+        }
+        let image = make_image(1, tracks);
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "Spectrum +3 CF2");
+    }
+
+    #[test]
+    fn test_pcw_oversized() {
+        // 42 tracks instead of 40 → oversized suffix
+        let spec_data = spec_block(0, 0, 42, 9, 2, 1, 3, 2, 42, 82);
+        let mut tracks = vec![{
+            let mut t = vec![(1, spec_data)];
+            for id in 2..=9 {
+                t.push((id, vec![]));
+            }
+            t
+        }];
+        for _ in 1..42 {
+            let mut t = Vec::new();
+            for id in 1..=9 {
+                t.push((id, vec![]));
+            }
+            tracks.push(t);
+        }
+        let image = make_image(1, tracks);
+        let spec = DiskSpecification::identify(&image);
+        assert!(
+            spec.format.ends_with("(oversized)"),
+            "expected oversized suffix, got {:?}",
+            spec.format
+        );
+    }
+
+    // --- MGT DOS variants ---
+
+    #[test]
+    fn test_mgt_bdos() {
+        let mut sector0 = vec![0u8; 512];
+        sector0[232..236].copy_from_slice(b"BDOS");
+        let tracks_per_side = 80;
+        let mut tracks: Vec<Vec<(u8, Vec<u8>)>> = Vec::new();
+        for t in 0..tracks_per_side {
+            let mut track = Vec::new();
+            for id in 1..=10 {
+                if t == 0 && id == 1 {
+                    track.push((id, sector0.clone()));
+                } else {
+                    track.push((id, vec![]));
+                }
+            }
+            tracks.push(track);
+        }
+        // Duplicate the same tracks for side 2
+        let mut image = DiskImage::builder()
+            .num_sides(2)
+            .num_tracks(tracks_per_side)
+            .build()
+            .unwrap();
+        for side in 0..2 {
+            let disk = image.get_disk_mut(side).unwrap();
+            *disk = Disk::new(side);
+            for (t, sector_list) in tracks.iter().enumerate() {
+                let mut track = Track::new(t as u8, side);
+                for (id, data) in sector_list {
+                    let body = if data.is_empty() { vec![0xE5; 512] } else { data.clone() };
+                    track.add_sector(Sector::with_data(SectorId::new(t as u8, side, *id, 2), body));
+                }
+                disk.add_track(track);
+            }
+        }
+        let spec = DiskSpecification::identify(&image);
+        assert_eq!(spec.format, "MGT Sam Coupe BDOS");
+    }
+
+    #[test]
+    fn test_mgt_dos_helper() {
+        let mut samdos = vec![0u8; 512];
+        samdos[210] = 0;
+        assert_eq!(identify_mgt_dos(&samdos), "SAMDOS");
+
+        samdos[210] = 255;
+        assert_eq!(identify_mgt_dos(&samdos), "SAMDOS");
+
+        let mut masterdos = vec![0u8; 512];
+        masterdos[210] = 0x42;
+        assert_eq!(identify_mgt_dos(&masterdos), "MasterDOS");
+
+        let mut bdos = vec![0u8; 512];
+        bdos[232..236].copy_from_slice(b"BDOS");
+        assert_eq!(identify_mgt_dos(&bdos), "BDOS");
+    }
+
+    // --- Helpers ---
+
+    #[test]
+    fn test_mod_checksum() {
+        assert_eq!(mod_checksum(&[1, 2, 3], 256), 6);
+        assert_eq!(mod_checksum(&[100, 100, 100], 256), 44);
+        assert_eq!(mod_checksum(&[0xFF, 0xFF, 0xFF], 256), 253);
     }
 }

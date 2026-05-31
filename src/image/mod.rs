@@ -66,11 +66,12 @@ impl DiskImage {
     /// Get the default filesystem type based on disk specification
     ///
     /// This checks the disk specification to determine the appropriate filesystem:
-    /// - Returns `FileSystemType::Mgt` if the spec format is "MGT Sam Coupe"
+    /// - Returns `FileSystemType::Mgt` if the spec is recognised as MGT Sam Coupe
+    ///   (including SAMDOS / MasterDOS / BDOS variants)
     /// - Otherwise falls back to the image format's default filesystem
     pub fn default_filesystem(&self) -> FileSystemType {
         let spec = DiskSpecification::identify(self);
-        if spec.format == "MGT Sam Coupe" {
+        if spec.format.starts_with("MGT Sam Coupe") {
             FileSystemType::Mgt
         } else {
             self.format.default_filesystem()
