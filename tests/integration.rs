@@ -60,14 +60,14 @@ fn test_format_specs() {
     assert_eq!(amstrad.num_sides, 1);
     assert_eq!(amstrad.num_tracks, 40);
     assert_eq!(amstrad.sectors_per_track, 9);
-    assert_eq!(amstrad.total_capacity_kb(), 180);
+    assert_eq!(amstrad.total_capacity() / 1024, 180);
 
     let spectrum = FormatSpec::spectrum_plus3();
     assert_eq!(spectrum.first_sector_id, 0x01);
 
     let pcw = FormatSpec::pcw_dsdd();
     assert_eq!(pcw.num_sides, 2);
-    assert_eq!(pcw.total_capacity_kb(), 360);
+    assert_eq!(pcw.total_capacity() / 1024, 360);
 }
 
 #[test]
@@ -199,10 +199,10 @@ fn test_format_presets() {
 fn test_capacity_calculations() {
     let spec = FormatSpec::new(2, 80, 9, 512);
     assert_eq!(spec.total_capacity(), 2 * 80 * 9 * 512);
-    assert_eq!(spec.total_capacity_kb(), 720);
+    assert_eq!(spec.total_capacity() / 1024, 720);
 
     let image = DiskImage::create(spec).expect("Failed to create image");
-    assert_eq!(image.total_capacity_kb(), 720);
+    assert_eq!(image.total_capacity() / 1024, 720);
 }
 
 #[test]
