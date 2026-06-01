@@ -394,6 +394,43 @@ fn detect_speedlock(disk: &Disk) -> Option<ProtectionResult> {
         }
     }
 
+    // Stripped FDC flags fallback — some dumpers (e.g. Moxon's Backup) don't
+    // capture the NEC uPD765 status registers.  If the structural layout
+    // matches a known Speedlock pattern but all FDC flags are zero, report
+    // the protection with a caveat.
+
+    // Speedlock +3 1987/1988 stripped FDC flags
+    if track0.sector_count() >= 8 {
+        if let Some(track1) = get_track(disk, 1) {
+            if track1.sector_count() == 5 {
+                if let Some(t1s0) = track1.get_sector_by_index(0) {
+                    if t1s0.advertised_size() == 1024 && !has_fdc_errors(disk) {
+                        return Some(ProtectionResult::new(
+                            "Speedlock +3 1987/1988",
+                            "layout matches, stripped FDC flags".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Speedlock 1989/1990 stripped FDC flags
+    if track0.sector_count() >= 8 && disk.track_count() > 40 {
+        if let Some(track1) = get_track(disk, 1) {
+            if track1.sector_count() == 1 {
+                if let Some(sector) = track1.get_sector_by_index(0) {
+                    if sector.id.size_code == 6 && !has_fdc_errors(disk) {
+                        return Some(ProtectionResult::new(
+                            "Speedlock 1989/1990",
+                            "layout matches, stripped FDC flags".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -900,13 +937,16 @@ pub fn detect(disk: &Disk) -> Option<ProtectionResult> {
         return None;
     }
 
-    // Try each detector in order - return on first match
+    // Try each detector in order - return on first match.
+    // Speedlock runs before Hexagon because Hexagon's unsigned heuristic
+    // (1-sector N=6 with DE+CM+DD) is also produced by Speedlock 1989's
+    // big-sector tracks.
     let detectors: &[fn(&Disk) -> Option<ProtectionResult>] = &[
         detect_alkatraz,
         detect_frontier,
+        detect_speedlock,
         detect_hexagon,
         detect_paul_owens,
-        detect_speedlock,
         detect_three_inch_loader,
         detect_laser_load,
         detect_wrm,

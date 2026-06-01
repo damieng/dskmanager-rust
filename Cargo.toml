@@ -20,11 +20,20 @@ path = "src/lib.rs"
 name = "dsk"
 path = "src/bin/dsk.rs"
 
+[[bin]]
+name = "dsk-analyze"
+path = "src/bin/analyze.rs"
+
+[[bin]]
+name = "dsk-markdown"
+path = "src/bin/markdown.rs"
+
 [dependencies]
 thiserror = "2.0"
 dez80 = "4.0"
 rustyline = "15.0"
 dirs = "6.0"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 proptest = "1.4"
