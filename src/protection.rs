@@ -454,6 +454,26 @@ fn detect_speedlock(disk: &Disk) -> Option<ProtectionResult> {
         }
     }
 
+    // Speedlock +3 1987/1988 — data-side / Side B variant.
+    // Same 5 x 1024 byte layout as the boot side but without deleted-data
+    // marks (the disk stores pure game data, not the Speedlock loader).
+    if track0.sector_count() >= 7 {
+        if let Some(track1) = get_track(disk, 1) {
+            if track1.sector_count() == 5 {
+                if let Some(t1s0) = track1.get_sector_by_index(0) {
+                    if t1s0.advertised_size() == 1024
+                        && !track0.sectors().iter().any(|s| s.is_deleted())
+                    {
+                        return Some(ProtectionResult::new(
+                            "Speedlock +3 1987/1988",
+                            "data side (5x1024 layout, no deleted-data marks)".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
