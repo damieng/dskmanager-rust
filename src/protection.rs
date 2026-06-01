@@ -352,26 +352,39 @@ fn detect_speedlock(disk: &Disk) -> Option<ProtectionResult> {
 
     // Unsigned Speedlock +3 1987/1988
     let track0 = get_track(disk, 0)?;
-    if track0.sector_count() == 9 {
+    if track0.sector_count() >= 7 && track0.sectors().iter().any(|s| s.is_deleted()) {
         if let Some(track1) = get_track(disk, 1) {
             if track1.sector_count() == 5 {
                 if let Some(t1s0) = track1.get_sector_by_index(0) {
                     if t1s0.actual_size() == 1024 {
-                        let s6 = track0.get_sector_by_index(6)?;
-                        let s8 = track0.get_sector_by_index(8)?;
-
-                        if s6.fdc_status2.0 == 64 && s8.fdc_status2.0 == 0 {
-                            return Some(ProtectionResult::new(
-                                "Speedlock +3 1987",
-                                "probably, unsigned".to_string(),
-                            ));
+                        // Classic 9-sector T0: check s6/s8 st2 flags
+                        if track0.sector_count() == 9 {
+                            if let (Some(s6), Some(s8)) =
+                                (track0.get_sector_by_index(6), track0.get_sector_by_index(8))
+                            {
+                                if s6.fdc_status2.0 == 64 && s8.fdc_status2.0 == 0 {
+                                    return Some(ProtectionResult::new(
+                                        "Speedlock +3 1987",
+                                        "probably, unsigned".to_string(),
+                                    ));
+                                }
+                                if s6.fdc_status2.0 == 64 && s8.fdc_status2.0 == 64 {
+                                    return Some(ProtectionResult::new(
+                                        "Speedlock +3 1988",
+                                        "probably, unsigned".to_string(),
+                                    ));
+                                }
+                            }
                         }
-                        if s6.fdc_status2.0 == 64 && s8.fdc_status2.0 == 64 {
-                            return Some(ProtectionResult::new(
-                                "Speedlock +3 1988",
-                                "probably, unsigned".to_string(),
-                            ));
-                        }
+                        // Non-9-sector T0 (7 or 8): all sectors have DEL marks,
+                        // which is the defining feature of Speedlock's T0.
+                        return Some(ProtectionResult::new(
+                            "Speedlock +3 1987/1988",
+                            format!(
+                                "probably, unsigned (T0={} sectors with deleted data)",
+                                track0.sector_count()
+                            ),
+                        ));
                     }
                 }
             }
@@ -379,11 +392,21 @@ fn detect_speedlock(disk: &Disk) -> Option<ProtectionResult> {
     }
 
     // Unsigned Speedlock 1989/1990
-    if track0.sector_count() > 7 && disk.track_count() > 40 {
+    // CPC variant: sector ID 193 (0xC1); +3 variant: sector ID 1.
+    // Both use a 1-sector N=6 track with data-error flag.
+    // Two sub-variants: classic (T0=8-10 normal sectors, T1=1 big sector)
+    // and full-data-side (all tracks 1-sector, T0 included).
+    let t0_is_big = track0.sector_count() == 1
+        && track0.get_sector_by_index(0)
+            .map(|s| s.id.size_code == 6 && s.fdc_status1.0 == 32)
+            .unwrap_or(false);
+    if (track0.sector_count() >= 8 || t0_is_big) && disk.track_count() > 40 {
         if let Some(track1) = get_track(disk, 1) {
             if track1.sector_count() == 1 {
                 if let Some(sector) = track1.get_sector_by_index(0) {
-                    if sector.id.sector == 193 && sector.fdc_status1.0 == 32 {
+                    let is_cpc_id = sector.id.sector == 193;
+                    let is_p3_id = sector.id.sector == 1;
+                    if (is_cpc_id || is_p3_id) && sector.fdc_status1.0 == 32 {
                         return Some(ProtectionResult::new(
                             "Speedlock 1989/1990",
                             "probably, unsigned".to_string(),
@@ -968,12 +991,26 @@ pub fn detect(disk: &Disk) -> Option<ProtectionResult> {
         }
     }
 
-    // Unknown copy protection - disk is non-uniform or has FDC errors
-    if !is_uniform(disk) && has_fdc_errors(disk) {
-        return Some(ProtectionResult::new(
-            "Unknown copy protection",
-            "non-uniform disk with FDC errors".to_string(),
-        ));
+    // Unknown copy protection - disk is non-uniform AND has FDC errors on
+    // tracks that aren't just imaging artifacts.  Errors on tracks 40+
+    // typically come from reading past the physical tracks of a 40-track
+    // disk; those don't indicate real copy protection.
+    if !is_uniform(disk) {
+        let used_tracks = disk.tracks().iter().filter(|t| !t.is_empty()).count();
+        let max_valid = used_tracks.min(40);
+        let has_real_errors = (0..max_valid).any(|t_idx| {
+            if let Some(track) = disk.get_track(t_idx as u8) {
+                track.sectors().iter().any(|s| s.has_error())
+            } else {
+                false
+            }
+        });
+        if has_real_errors {
+            return Some(ProtectionResult::new(
+                "Unknown copy protection",
+                "non-uniform disk with FDC errors".to_string(),
+            ));
+        }
     }
 
     None
