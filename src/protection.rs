@@ -1018,18 +1018,33 @@ pub fn detect(disk: &Disk) -> Option<ProtectionResult> {
     if !is_uniform(disk) {
         let used_tracks = disk.tracks().iter().filter(|t| !t.is_empty()).count();
         let max_valid = used_tracks.min(40);
-        let has_real_errors = (0..max_valid).any(|t_idx| {
-            if let Some(track) = disk.get_track(t_idx as u8) {
-                track.sectors().iter().any(|s| s.has_error())
-            } else {
-                false
+        let error_tracks: Vec<usize> = (0..max_valid)
+            .filter(|&t_idx| {
+                disk.get_track(t_idx as u8)
+                    .map(|t| t.sectors().iter().any(|s| s.has_error()))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        if !error_tracks.is_empty() {
+            // A single bad track at T35+ on an otherwise uniform 9x512 disk
+            // is almost certainly a read/dump error, not copy protection.
+            let is_lone_high_error = error_tracks.len() <= 2
+                && error_tracks.iter().all(|&t| t >= 35)
+                && disk.tracks().iter().enumerate().all(|(i, t)| {
+                    t.is_empty()
+                        || error_tracks.contains(&i)
+                        || (t.sector_count() == 9
+                            && t.uniform_sector_size() == Some(512)
+                            && !t.sectors().iter().any(|s| s.is_deleted()))
+                });
+
+            if !is_lone_high_error {
+                return Some(ProtectionResult::new(
+                    "Unknown copy protection",
+                    "non-uniform disk with FDC errors".to_string(),
+                ));
             }
-        });
-        if has_real_errors {
-            return Some(ProtectionResult::new(
-                "Unknown copy protection",
-                "non-uniform disk with FDC errors".to_string(),
-            ));
         }
     }
 
