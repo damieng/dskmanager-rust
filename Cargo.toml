@@ -3,6 +3,7 @@ name = "dskmanager-rust"
 version = "0.1.0"
 edition = "2021"
 default-run = "dsk"
+autobins = false
 authors = ["Damien Guard"]
 description = "A Rust library for reading and writing DSK disk image files with filesystem support"
 license = "MIT OR Apache-2.0"
@@ -19,14 +20,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "dsk"
 path = "src/bin/dsk.rs"
-
-[[bin]]
-name = "dsk-analyze"
-path = "src/bin/analyze.rs"
-
-[[bin]]
-name = "dsk-markdown"
-path = "src/bin/markdown.rs"
 
 [dependencies]
 thiserror = "2.0"

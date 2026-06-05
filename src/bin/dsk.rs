@@ -12,6 +12,8 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
+mod report;
+
 /// Command completer for the REPL
 struct CommandCompleter {
     commands: Vec<&'static str>,
@@ -101,6 +103,13 @@ fn history_path() -> Option<std::path::PathBuf> {
 }
 
 fn main() {
+    // Batch subcommand: `dsk report <dir> [output] [--format csv|markdown]`.
+    // Runs non-interactively and exits without starting the REPL.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("report") {
+        std::process::exit(report::run(&args[2..]));
+    }
+
     println!("=== DSKManager ===");
     println!("Interactive console for exploring DSK format disk images.");
     println!("Type 'help' for available commands\n");
