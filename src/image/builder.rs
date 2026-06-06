@@ -104,6 +104,7 @@ impl DiskImageBuilder {
             disks,
             changed: true, // Newly created image is considered changed
             filename: None,
+            warnings: Vec::new(),
         })
     }
 }

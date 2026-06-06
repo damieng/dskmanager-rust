@@ -364,6 +364,7 @@ pub fn run(args: &[String]) -> i32 {
                         protection: format!("Failed to parse: {}", e),
                         protection_details: vec![],
                         characteristics: vec![],
+                        warnings: vec![],
                         bootable_on: String::new(),
                         boot_reason: String::new(),
                     },
@@ -1109,6 +1110,7 @@ struct DiskEntry {
     protection: String,
     protection_details: Vec<String>,
     characteristics: Vec<String>,
+    warnings: Vec<String>,
     bootable_on: String,
     boot_reason: String,
 }
@@ -1153,6 +1155,7 @@ fn analyze_image(image: &DiskImage) -> DiskEntry {
         protection,
         protection_details: all_details,
         characteristics,
+        warnings: image.warnings().to_vec(),
         bootable_on,
         boot_reason: boot.reason,
     }
@@ -1532,6 +1535,12 @@ fn write_markdown(
                 writeln!(out, "- Characteristics:")?;
                 for c in &entry.characteristics {
                     writeln!(out, "  - {}", c)?;
+                }
+            }
+            if !entry.warnings.is_empty() {
+                writeln!(out, "- Warnings:")?;
+                for w in &entry.warnings {
+                    writeln!(out, "  - {}", w)?;
                 }
             }
             writeln!(out)?;

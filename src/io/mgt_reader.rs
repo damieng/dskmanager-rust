@@ -107,6 +107,7 @@ pub fn read_mgt<P: AsRef<Path>>(path: P) -> Result<DiskImage> {
         disks: vec![disk0, disk1],
         changed: false,
         filename,
+        warnings: Vec::new(),
     })
 }
 

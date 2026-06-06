@@ -6,7 +6,7 @@ use crate::format::constants::*;
 use crate::format::{detect_format, DiskImageFormat, FormatSpec};
 use crate::image::{DataRate, Disk, DiskImage, RecordingMode, Sector, SectorId, Track};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Read a DSK file from disk
@@ -66,6 +66,7 @@ fn read_standard_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
         disks,
         changed: false,
         filename,
+        warnings: Vec::new(),
     })
 }
 
@@ -88,6 +89,7 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
     }
 
     let mut disks = Vec::with_capacity(num_sides as usize);
+    let mut recovered_tracks = 0usize;
 
     // Read tracks for each side
     let mut track_index = 0;
@@ -99,8 +101,21 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
             track_index += 1;
 
             if track_size == 0 {
-                // Unformatted track - create empty track
-                disk.add_track(Track::new(track_num, side));
+                // The track-size table reports zero for this track. Some writers
+                // (e.g. CPDRead) emit an Extended DSK with a blank size table even
+                // though real, uniformly-sized track data follows. Try to recover
+                // by reading the actual Track-Info block at the current position.
+                match recover_extended_track_size(&mut file, track_num, side)? {
+                    Some(recovered) => {
+                        let track = read_track(&mut file, track_num, side, recovered)?;
+                        disk.add_track(track);
+                        recovered_tracks += 1;
+                    }
+                    None => {
+                        // Genuinely unformatted track - create empty track
+                        disk.add_track(Track::new(track_num, side));
+                    }
+                }
             } else {
                 let track = read_track(&mut file, track_num, side, track_size)?;
                 disk.add_track(track);
@@ -113,13 +128,71 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
     // Create format spec
     let spec = build_format_spec(&disks, num_sides, num_tracks);
 
+    let mut warnings = Vec::new();
+    if recovered_tracks > 0 {
+        warnings.push(format!(
+            "Extended DSK track-size table was missing; recovered {} track(s) by scanning",
+            recovered_tracks
+        ));
+    }
+
     Ok(DiskImage {
         format: DiskImageFormat::ExtendedDSK,
         spec,
         disks,
         changed: false,
         filename,
+        warnings,
     })
+}
+
+/// Recover the size of an Extended DSK track whose size-table entry is zero.
+///
+/// Peeks at the Track-Info block at the current file position (without consuming
+/// it). The recovery only applies when a valid block is present *and* its stored
+/// track/side numbers match the expected ones - otherwise the zero entry denotes
+/// a genuinely unformatted track and the peek would have landed on the *next*
+/// track's data. Returns `Some(size)` with the byte length to read, else `None`.
+fn recover_extended_track_size(file: &mut File, track_num: u8, side: u8) -> Result<Option<usize>> {
+    let pos = file.stream_position()?;
+
+    // Read up to a full Track-Info block, tolerating EOF (trailing tracks).
+    let mut header = [0u8; TRACK_INFO_BLOCK_SIZE];
+    let mut filled = 0;
+    while filled < header.len() {
+        match file.read(&mut header[filled..])? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    file.seek(SeekFrom::Start(pos))?;
+
+    if filled < TRACK_INFO_BLOCK_SIZE || !header.starts_with(b"Track-Info") {
+        return Ok(None);
+    }
+
+    // Only recover when this block actually belongs to the expected track.
+    if header[0x10] != track_num || header[0x11] != side {
+        return Ok(None);
+    }
+
+    let num_sectors = header[0x15] as usize;
+    let mut total = TRACK_INFO_BLOCK_SIZE;
+    for i in 0..num_sectors {
+        let sib = 0x18 + i * SECTOR_INFO_SIZE;
+        if sib + SECTOR_INFO_SIZE > TRACK_INFO_BLOCK_SIZE {
+            break;
+        }
+        let size_code = header[sib + 3];
+        let data_length = u16::from_le_bytes([header[sib + 6], header[sib + 7]]) as usize;
+        total += if data_length > 0 {
+            data_length
+        } else {
+            fdc_size_to_stored_bytes(size_code)
+        };
+    }
+
+    Ok(Some(total))
 }
 
 /// Read a single track from the file
@@ -276,5 +349,63 @@ mod tests {
         assert_eq!(spec.sectors_per_track, 9);
         assert_eq!(spec.sector_size, 512);
         assert_eq!(spec.first_sector_id, 0xC1);
+    }
+
+    /// Regression: some writers (e.g. CPDRead) emit an Extended DSK whose
+    /// per-track size table is all zeros even though real track data follows.
+    /// The reader must recover the formatted tracks instead of reporting the
+    /// whole disk as unformatted, while still treating genuinely-absent
+    /// trailing tracks as empty.
+    #[test]
+    fn test_extended_dsk_zero_size_table_recovery() {
+        const SECTORS: usize = 9;
+        const SECTOR_SIZE: usize = 512;
+
+        // --- Disk info block (256 bytes): 2 tracks, 1 side, blank size table ---
+        let mut buf = vec![0u8; DISK_INFO_BLOCK_SIZE];
+        buf[..EXTENDED_DSK_SIGNATURE.len()].copy_from_slice(EXTENDED_DSK_SIGNATURE);
+        buf[DISK_INFO_TRACK_COUNT_OFFSET] = 2;
+        buf[DISK_INFO_SIDE_COUNT_OFFSET] = 1;
+        // DISK_INFO_EXT_TRACK_SIZE_OFFSET onward intentionally left zero.
+
+        // --- Track 0: a valid Track-Info block + 9x512 sector data ---
+        let mut track = vec![0u8; TRACK_INFO_BLOCK_SIZE];
+        track[..b"Track-Info\r\n".len()].copy_from_slice(b"Track-Info\r\n");
+        track[0x10] = 0; // track number
+        track[0x11] = 0; // side
+        track[0x14] = 2; // sector size code (512)
+        track[0x15] = SECTORS as u8;
+        track[0x16] = 0x4E; // gap3
+        track[0x17] = 0xE5; // filler
+        for i in 0..SECTORS {
+            let sib = 0x18 + i * SECTOR_INFO_SIZE;
+            track[sib] = 0; // C
+            track[sib + 1] = 0; // H
+            track[sib + 2] = 0x41 + i as u8; // R (sector id &41..&49)
+            track[sib + 3] = 2; // N (size code)
+            track[sib + 6] = (SECTOR_SIZE & 0xFF) as u8; // stored length low
+            track[sib + 7] = (SECTOR_SIZE >> 8) as u8; // stored length high
+        }
+        track.extend(std::iter::repeat(0xE5).take(SECTORS * SECTOR_SIZE));
+        buf.extend_from_slice(&track);
+        // Track 1 is deliberately absent from the file (genuinely unformatted).
+
+        // --- Round-trip through a temp file ---
+        let path = std::env::temp_dir()
+            .join(format!("dskmgr_zero_table_{}.dsk", std::process::id()));
+        std::fs::write(&path, &buf).unwrap();
+        let image = read_dsk(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(image.format, DiskImageFormat::ExtendedDSK);
+        let tracks = image.disks[0].tracks();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].sector_count(), SECTORS, "track 0 must be recovered");
+        assert_eq!(tracks[0].sectors()[0].id.sector, 0x41);
+        assert!(tracks[1].is_empty(), "absent trailing track stays empty");
+
+        // The recovery must be surfaced as a warning.
+        assert_eq!(image.warnings().len(), 1);
+        assert!(image.warnings()[0].contains("track-size table"));
     }
 }

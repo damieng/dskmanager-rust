@@ -32,6 +32,9 @@ pub struct DiskImage {
     pub(crate) changed: bool,
     /// Original filename if loaded from disk
     pub(crate) filename: Option<String>,
+    /// Non-fatal issues detected while reading the image (e.g. a recovered
+    /// structure). Empty for a cleanly-parsed image.
+    pub(crate) warnings: Vec<String>,
 }
 
 impl DiskImage {
@@ -86,6 +89,14 @@ impl DiskImage {
     /// Get the original filename if loaded from disk
     pub fn filename(&self) -> Option<&str> {
         self.filename.as_deref()
+    }
+
+    /// Non-fatal issues detected while reading the image.
+    ///
+    /// Empty for a cleanly-parsed image. Populated by the reader when it has
+    /// to recover from a malformed-but-readable image.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     /// Get all disks (sides)

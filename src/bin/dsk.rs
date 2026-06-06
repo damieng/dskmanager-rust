@@ -210,6 +210,9 @@ fn main() {
                 match DiskImage::open(&parts[1]) {
                     Ok(img) => {
                         println!("Opened: {}", parts[1]);
+                        for w in img.warnings() {
+                            println!("Warning: {}", w);
+                        }
                         image = Some(img);
                     }
                     Err(e) => println!("Error: {}", e),
