@@ -22,19 +22,82 @@ pub fn read_dsk<P: AsRef<Path>>(path: P) -> Result<DiskImage> {
     let mut disk_info = vec![0u8; DISK_INFO_BLOCK_SIZE];
     file.read_exact(&mut disk_info)?;
 
-    // Detect format
-    let format = detect_format(&disk_info)
-        .ok_or_else(|| DskError::invalid_format("Unknown DSK format"))?;
+    // Non-fatal issues collected while reading; attached to the image below.
+    let mut warnings = Vec::new();
 
-    match format {
-            DiskImageFormat::StandardDSK => read_standard_dsk(file, &disk_info, filename),
-            DiskImageFormat::ExtendedDSK => read_extended_dsk(file, &disk_info, filename),
-        DiskImageFormat::RawMgt => Err(DskError::invalid_format("RawMgt format should use read_mgt")),
+    // Detect format, tolerating a signature whose case is wrong (some writers
+    // emit "EXTENDED CPC DSK FILE" in upper case).
+    let format = match detect_format(&disk_info) {
+        Some(f) => f,
+        None => match detect_format_ignore_case(&disk_info) {
+            Some(f) => {
+                warnings.push("File signature has incorrect case.".to_string());
+                f
+            }
+            None => return Err(DskError::invalid_format("Unknown DSK format")),
+        },
+    };
+
+    // The creator/tool signature should be present.
+    if !has_creator_signature(&disk_info, format) {
+        warnings.push("Missing creator signature.".to_string());
+    }
+
+    let mut image = match format {
+        DiskImageFormat::StandardDSK => read_standard_dsk(file, &disk_info, filename, &mut warnings)?,
+        DiskImageFormat::ExtendedDSK => read_extended_dsk(file, &disk_info, filename, &mut warnings)?,
+        DiskImageFormat::RawMgt => {
+            return Err(DskError::invalid_format("RawMgt format should use read_mgt"))
+        }
+    };
+
+    image.warnings = warnings;
+    Ok(image)
+}
+
+/// Whether the disk-info block identifies its creator.
+///
+/// The dedicated creator field is at offset 0x22 (14 bytes), but many writers
+/// (e.g. CPCEMU) instead stamp their name/date into the 34-byte descriptor
+/// line itself - e.g. "MV - CPCEMU / 12 May 97" in place of the canonical
+/// "MV - CPCEMU Disk-File...". A descriptor that deviates from the canonical
+/// signature is therefore treated as carrying creator info.
+fn has_creator_signature(disk_info: &[u8], format: DiskImageFormat) -> bool {
+    let field = &disk_info[DISK_INFO_CREATOR_OFFSET..DISK_INFO_CREATOR_OFFSET + 14];
+    if field.iter().any(|&b| b != 0 && b != b' ') {
+        return true;
+    }
+    let canonical: &[u8] = match format {
+        DiskImageFormat::ExtendedDSK => EXTENDED_DSK_SIGNATURE,
+        DiskImageFormat::StandardDSK => STANDARD_DSK_SIGNATURE,
+        DiskImageFormat::RawMgt => return true,
+    };
+    // Compare the 34-byte descriptor; a difference means embedded creator text.
+    disk_info[..DISK_INFO_CREATOR_OFFSET] != canonical[..DISK_INFO_CREATOR_OFFSET]
+}
+
+/// Detect the DSK format ignoring ASCII case in the signature.
+fn detect_format_ignore_case(magic: &[u8]) -> Option<DiskImageFormat> {
+    let starts_with_ci = |prefix: &[u8]| {
+        magic.len() >= prefix.len()
+            && magic[..prefix.len()].eq_ignore_ascii_case(prefix)
+    };
+    if starts_with_ci(b"EXTENDED") {
+        Some(DiskImageFormat::ExtendedDSK)
+    } else if starts_with_ci(b"MV - CPC") {
+        Some(DiskImageFormat::StandardDSK)
+    } else {
+        None
     }
 }
 
 /// Read a Standard DSK file
-fn read_standard_dsk(mut file: File, disk_info: &[u8], filename: Option<String>) -> Result<DiskImage> {
+fn read_standard_dsk(
+    mut file: File,
+    disk_info: &[u8],
+    filename: Option<String>,
+    warnings: &mut Vec<String>,
+) -> Result<DiskImage> {
     // Parse disk info block
     let num_tracks = disk_info[DISK_INFO_TRACK_COUNT_OFFSET];
     let num_sides = disk_info[DISK_INFO_SIDE_COUNT_OFFSET];
@@ -50,7 +113,7 @@ fn read_standard_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
         let mut disk = Disk::new(side);
 
         for track_num in 0..num_tracks {
-            let track = read_track(&mut file, track_num, side, track_size)?;
+            let track = read_track(&mut file, track_num, side, track_size, warnings)?;
             disk.add_track(track);
         }
 
@@ -71,7 +134,12 @@ fn read_standard_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
 }
 
 /// Read an Extended DSK file
-fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>) -> Result<DiskImage> {
+fn read_extended_dsk(
+    mut file: File,
+    disk_info: &[u8],
+    filename: Option<String>,
+    warnings: &mut Vec<String>,
+) -> Result<DiskImage> {
     // Parse disk info block
     let num_tracks = disk_info[DISK_INFO_TRACK_COUNT_OFFSET];
     let num_sides = disk_info[DISK_INFO_SIDE_COUNT_OFFSET];
@@ -107,7 +175,7 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
                 // by reading the actual Track-Info block at the current position.
                 match recover_extended_track_size(&mut file, track_num, side)? {
                     Some(recovered) => {
-                        let track = read_track(&mut file, track_num, side, recovered)?;
+                        let track = read_track(&mut file, track_num, side, recovered, warnings)?;
                         disk.add_track(track);
                         recovered_tracks += 1;
                     }
@@ -117,7 +185,7 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
                     }
                 }
             } else {
-                let track = read_track(&mut file, track_num, side, track_size)?;
+                let track = read_track(&mut file, track_num, side, track_size, warnings)?;
                 disk.add_track(track);
             }
         }
@@ -128,7 +196,6 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
     // Create format spec
     let spec = build_format_spec(&disks, num_sides, num_tracks);
 
-    let mut warnings = Vec::new();
     if recovered_tracks > 0 {
         warnings.push(format!(
             "Extended DSK track-size table was missing; recovered {} track(s) by scanning",
@@ -142,7 +209,7 @@ fn read_extended_dsk(mut file: File, disk_info: &[u8], filename: Option<String>)
         disks,
         changed: false,
         filename,
-        warnings,
+        warnings: Vec::new(),
     })
 }
 
@@ -196,9 +263,30 @@ fn recover_extended_track_size(file: &mut File, track_num: u8, side: u8) -> Resu
 }
 
 /// Read a single track from the file
-fn read_track(file: &mut File, track_num: u8, side: u8, track_size: usize) -> Result<Track> {
+fn read_track(
+    file: &mut File,
+    track_num: u8,
+    side: u8,
+    track_size: usize,
+    warnings: &mut Vec<String>,
+) -> Result<Track> {
+    // Read the declared track length, tolerating a truncated file rather than
+    // aborting the whole load.
     let mut track_data = vec![0u8; track_size];
-    file.read_exact(&mut track_data)?;
+    let mut filled = 0;
+    while filled < track_size {
+        match file.read(&mut track_data[filled..])? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    if filled < track_size {
+        warnings.push(format!(
+            "Side {} track {} declared {} bytes but only {} were available (truncated image).",
+            side, track_num, track_size, filled
+        ));
+        track_data.truncate(filled);
+    }
 
     // Parse track info block (256 bytes)
     if track_data.len() < TRACK_INFO_BLOCK_SIZE {
@@ -208,6 +296,16 @@ fn read_track(file: &mut File, track_num: u8, side: u8, track_size: usize) -> Re
     // Verify track marker
     if !track_data.starts_with(b"Track-Info") {
         return Err(DskError::parse(0, "Invalid track marker"));
+    }
+
+    // A valid marker is "Track-Info\r\n"; some writers pad with spaces instead.
+    if track_data[10..12] != [0x0D, 0x0A]
+        && !warnings.iter().any(|w| w.starts_with("Disk image uses incorrect"))
+    {
+        warnings.push(
+            "Disk image uses incorrect \"Track-Info\" markers padded with spaces not CRLF."
+                .to_string(),
+        );
     }
 
     let _track_number = track_data[0x10];
@@ -250,11 +348,19 @@ fn read_track(file: &mut File, track_num: u8, side: u8, track_size: usize) -> Re
 
         // Calculate actual sector data size
         // Use stored size rules when data_length is 0 (standard format fallback)
-        let actual_size = if data_length > 0 {
+        let mut actual_size = if data_length > 0 {
             data_length as usize
         } else {
             fdc_size_to_stored_bytes(sector_size_code)
         };
+
+        if actual_size > MAX_SECTOR_SIZE {
+            warnings.push(format!(
+                "Side {} track {} sector {} exceeds the {} byte size limit.",
+                side, track_num, i, MAX_SECTOR_SIZE
+            ));
+            actual_size = MAX_SECTOR_SIZE;
+        }
 
         // Extract sector data
         let sector_data = if sector_offset + actual_size <= track_data.len() {
@@ -364,6 +470,7 @@ mod tests {
         // --- Disk info block (256 bytes): 2 tracks, 1 side, blank size table ---
         let mut buf = vec![0u8; DISK_INFO_BLOCK_SIZE];
         buf[..EXTENDED_DSK_SIGNATURE.len()].copy_from_slice(EXTENDED_DSK_SIGNATURE);
+        buf[DISK_INFO_CREATOR_OFFSET..DISK_INFO_CREATOR_OFFSET + 6].copy_from_slice(b"CPDRea");
         buf[DISK_INFO_TRACK_COUNT_OFFSET] = 2;
         buf[DISK_INFO_SIDE_COUNT_OFFSET] = 1;
         // DISK_INFO_EXT_TRACK_SIZE_OFFSET onward intentionally left zero.
@@ -404,8 +511,109 @@ mod tests {
         assert_eq!(tracks[0].sectors()[0].id.sector, 0x41);
         assert!(tracks[1].is_empty(), "absent trailing track stays empty");
 
-        // The recovery must be surfaced as a warning.
+        // The recovery must be surfaced as a warning (and only that one).
         assert_eq!(image.warnings().len(), 1);
         assert!(image.warnings()[0].contains("track-size table"));
+    }
+
+    /// Build a complete, well-formed single-track Extended DSK (proper size
+    /// table, creator present) that loads with no warnings. Tests mutate the
+    /// returned buffer to provoke specific warnings.
+    fn one_track_ext_dsk() -> Vec<u8> {
+        const SECTORS: usize = 9;
+        const SECTOR_SIZE: usize = 512;
+        let track_len = TRACK_INFO_BLOCK_SIZE + SECTORS * SECTOR_SIZE; // 4864 = 0x1300
+
+        let mut buf = vec![0u8; DISK_INFO_BLOCK_SIZE];
+        buf[..EXTENDED_DSK_SIGNATURE.len()].copy_from_slice(EXTENDED_DSK_SIGNATURE);
+        buf[DISK_INFO_CREATOR_OFFSET..DISK_INFO_CREATOR_OFFSET + 6].copy_from_slice(b"tester");
+        buf[DISK_INFO_TRACK_COUNT_OFFSET] = 1;
+        buf[DISK_INFO_SIDE_COUNT_OFFSET] = 1;
+        buf[DISK_INFO_EXT_TRACK_SIZE_OFFSET] = (track_len / 256) as u8; // 0x13
+
+        let mut track = vec![0u8; TRACK_INFO_BLOCK_SIZE];
+        track[..b"Track-Info\r\n".len()].copy_from_slice(b"Track-Info\r\n");
+        track[0x14] = 2;
+        track[0x15] = SECTORS as u8;
+        track[0x16] = 0x4E;
+        track[0x17] = 0xE5;
+        for i in 0..SECTORS {
+            let sib = 0x18 + i * SECTOR_INFO_SIZE;
+            track[sib + 2] = 0x41 + i as u8;
+            track[sib + 3] = 2;
+            track[sib + 6] = (SECTOR_SIZE & 0xFF) as u8;
+            track[sib + 7] = (SECTOR_SIZE >> 8) as u8;
+        }
+        track.extend(std::iter::repeat(0xE5).take(SECTORS * SECTOR_SIZE));
+        buf.extend_from_slice(&track);
+        buf
+    }
+
+    fn read_buf(buf: &[u8], tag: &str) -> DiskImage {
+        let path = std::env::temp_dir()
+            .join(format!("dskmgr_{}_{}.dsk", tag, std::process::id()));
+        std::fs::write(&path, buf).unwrap();
+        let image = read_dsk(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        image
+    }
+
+    #[test]
+    fn test_clean_image_has_no_warnings() {
+        let image = read_buf(&one_track_ext_dsk(), "clean");
+        assert!(image.warnings().is_empty(), "{:?}", image.warnings());
+    }
+
+    #[test]
+    fn test_warn_missing_creator() {
+        let mut buf = one_track_ext_dsk();
+        for b in &mut buf[DISK_INFO_CREATOR_OFFSET..DISK_INFO_CREATOR_OFFSET + 14] {
+            *b = 0;
+        }
+        let image = read_buf(&buf, "nocreator");
+        assert!(image.warnings().iter().any(|w| w.contains("Missing creator")));
+    }
+
+    #[test]
+    fn test_creator_embedded_in_descriptor_is_not_missing() {
+        // "MV - CPCEMU / 12 May 97" style: creator in the descriptor, blank field.
+        let mut info = vec![0u8; DISK_INFO_BLOCK_SIZE];
+        info[..29].copy_from_slice(b"MV - CPCEMU / 12 May 97 20:01");
+        assert!(has_creator_signature(&info, DiskImageFormat::StandardDSK));
+
+        // Canonical descriptor + blank field = genuinely no creator.
+        let mut canon = vec![0u8; DISK_INFO_BLOCK_SIZE];
+        canon[..STANDARD_DSK_SIGNATURE.len()].copy_from_slice(STANDARD_DSK_SIGNATURE);
+        assert!(!has_creator_signature(&canon, DiskImageFormat::StandardDSK));
+
+        // Canonical descriptor but populated field = creator present.
+        canon[DISK_INFO_CREATOR_OFFSET..DISK_INFO_CREATOR_OFFSET + 4].copy_from_slice(b"SPIN");
+        assert!(has_creator_signature(&canon, DiskImageFormat::StandardDSK));
+    }
+
+    #[test]
+    fn test_warn_signature_wrong_case() {
+        let mut buf = one_track_ext_dsk();
+        buf[..8].copy_from_slice(b"Extended");
+        let image = read_buf(&buf, "case");
+        assert!(image.warnings().iter().any(|w| w.contains("incorrect case")));
+    }
+
+    #[test]
+    fn test_warn_broken_track_markers() {
+        let mut buf = one_track_ext_dsk();
+        // Replace the "\r\n" after "Track-Info" with spaces in the track block.
+        buf[DISK_INFO_BLOCK_SIZE + 10] = b' ';
+        buf[DISK_INFO_BLOCK_SIZE + 11] = b' ';
+        let image = read_buf(&buf, "markers");
+        assert!(image.warnings().iter().any(|w| w.contains("Track-Info")));
+    }
+
+    #[test]
+    fn test_warn_truncated_track() {
+        let mut buf = one_track_ext_dsk();
+        buf.truncate(buf.len() - 1000); // chop the tail of the track
+        let image = read_buf(&buf, "trunc");
+        assert!(image.warnings().iter().any(|w| w.contains("truncated")));
     }
 }

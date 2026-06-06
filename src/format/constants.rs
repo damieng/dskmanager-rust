@@ -21,6 +21,9 @@ pub const MAX_TRACKS: usize = 204;
 /// Maximum number of sectors per track
 pub const MAX_SECTORS_PER_TRACK: usize = 29;
 
+/// Largest sector data size the FDC can address (size code 8)
+pub const MAX_SECTOR_SIZE: usize = 32768;
+
 /// Size of disk info block
 pub const DISK_INFO_BLOCK_SIZE: usize = 256;
 
