@@ -117,6 +117,15 @@ fn main() {
             println!("      Writes a report to [output] (stdout if omitted).");
             println!("      Format defaults to CSV, or inferred from extension (.csv / .md).");
             println!();
+            println!("  Report filters (combine with AND):");
+            println!("      --filter-format <text>        Substring match on disk format");
+            println!("      --filter-tracks <N>           Exact track count");
+            println!("      --filter-sides <N>            Exact side count");
+            println!("      --filter-sector-size <N>      Exact sector size in bytes");
+            println!("      --filter-protection [text]    Any protection, or substring on name");
+            println!("      --filter-has-errors           Has FDC errors");
+            println!("      --filter-quirks               Has non-standard characteristics");
+            println!();
             println!("  (no arguments)");
             println!("      Start the interactive REPL for exploring disk images.");
             println!();

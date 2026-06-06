@@ -66,6 +66,111 @@ struct Counts {
     errors: usize,
 }
 
+struct Filters {
+    format: Option<String>,
+    tracks: Option<usize>,
+    sides: Option<usize>,
+    sector_size: Option<usize>,
+    protection: Option<Option<String>>,
+    has_errors: bool,
+    quirks: bool,
+}
+
+impl Filters {
+    fn matches(&self, image: &DiskImage) -> bool {
+        if self.format.is_none()
+            && self.tracks.is_none()
+            && self.sides.is_none()
+            && self.sector_size.is_none()
+            && self.protection.is_none()
+            && !self.has_errors
+            && !self.quirks
+        {
+            return true;
+        }
+
+        if let Some(ref fmt) = self.format {
+            let spec = DiskSpecification::identify(image);
+            if !spec.format.to_ascii_lowercase().contains(&fmt.to_ascii_lowercase()) {
+                return false;
+            }
+        }
+
+        if let Some(sides) = self.sides {
+            if image.disks().len() != sides {
+                return false;
+            }
+        }
+
+        for disk in image.disks() {
+            if let Some(tracks) = self.tracks {
+                if disk.track_count() != tracks {
+                    return false;
+                }
+            }
+
+            if let Some(sector_size) = self.sector_size {
+                if let Some(t0) = disk.get_track(0) {
+                    if let Some(s0) = t0.get_sector_by_index(0) {
+                        if s0.advertised_size() != sector_size {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            if let Some(ref prot_filter) = self.protection {
+                let detected = protection::detect(disk);
+                match prot_filter {
+                    None => {
+                        if detected.is_none() {
+                            return false;
+                        }
+                    }
+                    Some(ref text) => {
+                        let name = detected.as_ref().map(|d| d.name.as_str()).unwrap_or("");
+                        if !name.to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            if self.has_errors {
+                let mut found = false;
+                for t_idx in 0..disk.track_count() {
+                    if let Some(track) = disk.get_track(t_idx as u8) {
+                        for s_idx in 0..track.sector_count() {
+                            if let Some(sector) = track.get_sector_by_index(s_idx) {
+                                if sector.has_error() {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if found {
+                        break;
+                    }
+                }
+                if !found {
+                    return false;
+                }
+            }
+
+            if self.quirks {
+                let spec = DiskSpecification::identify(image);
+                let quirks = md_quirks(image, &spec);
+                if quirks.is_empty() {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+}
+
 /// CSV header — keep in sync with `csv_row`.
 const CSV_HEADER: &str = "file,format,format_source,protection,protection_reason,fingerprint,tracks,sides,sectors_per_track,sector_size,first_sector_id,is_uniform,has_fdc_errors,track_layout,nine_sector_tracks,non_nine_tracks,empty_tracks,biggest_track_bytes,sector_count_pattern";
 
@@ -73,9 +178,17 @@ const CSV_HEADER: &str = "file,format,format_source,protection,protection_reason
 /// (i.e. excluding the program name and the `report` subcommand). Returns a
 /// process exit code.
 pub fn run(args: &[String]) -> i32 {
-    // Parse: <root-dir> [output] [--format csv|markdown]
     let mut positional: Vec<String> = Vec::new();
     let mut format: Option<Format> = None;
+    let mut filters = Filters {
+        format: None,
+        tracks: None,
+        sides: None,
+        sector_size: None,
+        protection: None,
+        has_errors: false,
+        quirks: false,
+    };
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -102,6 +215,85 @@ pub fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             }
+        } else if arg == "--filter-format" {
+            i += 1;
+            match args.get(i) {
+                Some(v) => filters.format = Some(v.clone()),
+                None => {
+                    eprintln!("--filter-format requires a value");
+                    return 1;
+                }
+            }
+        } else if let Some(v) = arg.strip_prefix("--filter-format=") {
+            filters.format = Some(v.to_string());
+        } else if arg == "--filter-tracks" {
+            i += 1;
+            match args.get(i).and_then(|v| v.parse().ok()) {
+                Some(v) => filters.tracks = Some(v),
+                None => {
+                    eprintln!("--filter-tracks requires a number");
+                    return 1;
+                }
+            }
+        } else if let Some(v) = arg.strip_prefix("--filter-tracks=") {
+            match v.parse() {
+                Ok(n) => filters.tracks = Some(n),
+                Err(_) => {
+                    eprintln!("--filter-tracks requires a number");
+                    return 1;
+                }
+            }
+        } else if arg == "--filter-sides" {
+            i += 1;
+            match args.get(i).and_then(|v| v.parse().ok()) {
+                Some(v) => filters.sides = Some(v),
+                None => {
+                    eprintln!("--filter-sides requires a number");
+                    return 1;
+                }
+            }
+        } else if let Some(v) = arg.strip_prefix("--filter-sides=") {
+            match v.parse() {
+                Ok(n) => filters.sides = Some(n),
+                Err(_) => {
+                    eprintln!("--filter-sides requires a number");
+                    return 1;
+                }
+            }
+        } else if arg == "--filter-sector-size" {
+            i += 1;
+            match args.get(i).and_then(|v| v.parse().ok()) {
+                Some(v) => filters.sector_size = Some(v),
+                None => {
+                    eprintln!("--filter-sector-size requires a number");
+                    return 1;
+                }
+            }
+        } else if let Some(v) = arg.strip_prefix("--filter-sector-size=") {
+            match v.parse() {
+                Ok(n) => filters.sector_size = Some(n),
+                Err(_) => {
+                    eprintln!("--filter-sector-size requires a number");
+                    return 1;
+                }
+            }
+        } else if arg == "--filter-protection" {
+            i += 1;
+            match args.get(i) {
+                Some(v) if !v.starts_with('-') => {
+                    filters.protection = Some(Some(v.clone()));
+                }
+                _ => {
+                    filters.protection = Some(None);
+                    i = i.saturating_sub(1);
+                }
+            }
+        } else if let Some(v) = arg.strip_prefix("--filter-protection=") {
+            filters.protection = Some(Some(v.to_string()));
+        } else if arg == "--filter-has-errors" {
+            filters.has_errors = true;
+        } else if arg == "--filter-quirks" {
+            filters.quirks = true;
         } else {
             positional.push(arg.clone());
         }
@@ -111,7 +303,7 @@ pub fn run(args: &[String]) -> i32 {
     let pattern = match positional.first() {
         Some(p) => p.clone(),
         None => {
-            eprintln!("Usage: dsk report <pattern> [output] [--format csv|markdown]");
+            eprintln!("Usage: dsk report <pattern> [output] [--format csv|markdown] [filters]");
             return 1;
         }
     };
@@ -149,7 +341,7 @@ pub fn run(args: &[String]) -> i32 {
                 eprintln!("Failed to write output");
                 return 1;
             }
-            process_files(&root, &files, &mut counts, &mut |title, _folder, image| {
+            process_files(&root, &files, &filters, &mut counts, &mut |title, _folder, image| {
                 let line = match image {
                     Ok(img) => csv_row(&title, &img),
                     Err(e) => csv_error_row(&title, &e),
@@ -159,7 +351,7 @@ pub fn run(args: &[String]) -> i32 {
         }
         Format::Markdown => {
             let mut sections: BTreeMap<String, Vec<DiskEntry>> = BTreeMap::new();
-            process_files(&root, &files, &mut counts, &mut |title, folder, image| {
+            process_files(&root, &files, &filters, &mut counts, &mut |title, folder, image| {
                 let entry = match image {
                     Ok(img) => {
                         let mut entry = analyze_image(&img);
@@ -323,6 +515,7 @@ fn common_root(files: &[PathBuf]) -> PathBuf {
 fn process_files(
     root: &Path,
     files: &[PathBuf],
+    filters: &Filters,
     counts: &mut Counts,
     emit: &mut dyn FnMut(String, String, std::result::Result<DiskImage, String>),
 ) {
@@ -333,6 +526,11 @@ fn process_files(
                 counts.dsks += 1;
                 set_current_file(&path.display().to_string());
                 let image = DiskImage::open(path).map_err(|e| e.to_string());
+                if let Ok(ref img) = image {
+                    if !filters.matches(img) {
+                        continue;
+                    }
+                }
                 if image.is_err() {
                     counts.errors += 1;
                 }
@@ -340,7 +538,7 @@ fn process_files(
                 progress(counts);
             }
             Some("zip") => {
-                scan_zip(root, path, counts, emit);
+                scan_zip(root, path, filters, counts, emit);
             }
             _ => {}
         }
@@ -356,6 +554,7 @@ fn progress(counts: &Counts) {
 fn scan_zip(
     root: &Path,
     zip_path: &Path,
+    filters: &Filters,
     counts: &mut Counts,
     emit: &mut dyn FnMut(String, String, std::result::Result<DiskImage, String>),
 ) {
@@ -398,6 +597,11 @@ fn scan_zip(
         let title = format!("{} → {}", zip_rel, name);
         set_current_file(&title);
         let image = open_bytes(&bytes);
+        if let Ok(ref img) = image {
+            if !filters.matches(img) {
+                continue;
+            }
+        }
         if image.is_err() {
             counts.errors += 1;
         }
