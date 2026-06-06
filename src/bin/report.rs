@@ -172,7 +172,7 @@ impl Filters {
 }
 
 /// CSV header — keep in sync with `csv_row`.
-const CSV_HEADER: &str = "file,format,format_source,protection,protection_reason,fingerprint,tracks,sides,sectors_per_track,sector_size,first_sector_id,is_uniform,has_fdc_errors,track_layout,nine_sector_tracks,non_nine_tracks,empty_tracks,biggest_track_bytes,sector_count_pattern";
+const CSV_HEADER: &str = "file,format,format_source,protection,protection_reason,fingerprint,tracks,sides,sectors_per_track,sector_size,first_sector_id,is_uniform,has_fdc_errors,track_layout,nine_sector_tracks,non_nine_tracks,empty_tracks,biggest_track_bytes,sector_count_pattern,bootable_on,boot_reason";
 
 /// Entry point for `dsk report`. `args` are the arguments following `report`
 /// (i.e. excluding the program name and the `report` subcommand). Returns a
@@ -364,6 +364,8 @@ pub fn run(args: &[String]) -> i32 {
                         protection: format!("Failed to parse: {}", e),
                         protection_details: vec![],
                         characteristics: vec![],
+                        bootable_on: String::new(),
+                        boot_reason: String::new(),
                     },
                 };
                 sections.entry(folder).or_default().push(entry);
@@ -683,8 +685,15 @@ fn csv_row(title: &str, image: &DiskImage) -> String {
     let fingerprint = chars.fingerprint();
     let file = title.replace(',', ";");
 
+    let boot = BootDetection::detect(image);
+    let bootable_on = if boot.system.is_empty() {
+        "Not bootable"
+    } else {
+        &boot.system
+    };
+
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         file,
         escape_csv(&spec.format),
         escape_csv(&spec.source),
@@ -704,12 +713,14 @@ fn csv_row(title: &str, image: &DiskImage) -> String {
         chars.empty_tracks,
         chars.biggest_track_bytes,
         escape_csv(&chars.sector_count_pattern),
+        escape_csv(bootable_on),
+        escape_csv(&boot.reason),
     )
 }
 
 fn csv_error_row(title: &str, err: &str) -> String {
     let file = title.replace(',', ";");
-    format!("{},ERROR,ERROR,ERROR,{},ERROR,,,,,,,ERROR,,,,", file, err)
+    format!("{},ERROR,ERROR,ERROR,{},ERROR,,,,,,,ERROR,,,,,,,,", file, err)
 }
 
 fn escape_csv(s: &str) -> String {
@@ -1098,6 +1109,8 @@ struct DiskEntry {
     protection: String,
     protection_details: Vec<String>,
     characteristics: Vec<String>,
+    bootable_on: String,
+    boot_reason: String,
 }
 
 fn analyze_image(image: &DiskImage) -> DiskEntry {
@@ -1127,12 +1140,21 @@ fn analyze_image(image: &DiskImage) -> DiskEntry {
 
     let characteristics = md_quirks(image, &spec);
 
+    let boot = BootDetection::detect(image);
+    let bootable_on = if boot.system.is_empty() {
+        "Not bootable".to_string()
+    } else {
+        boot.system.clone()
+    };
+
     DiskEntry {
         title: String::new(),
         format: spec.format,
         protection,
         protection_details: all_details,
         characteristics,
+        bootable_on,
+        boot_reason: boot.reason,
     }
 }
 
@@ -1496,6 +1518,12 @@ fn write_markdown(
                 writeln!(out, "  - Details:")?;
                 for d in &entry.protection_details {
                     writeln!(out, "    - {}", d)?;
+                }
+            }
+            if !entry.bootable_on.is_empty() {
+                writeln!(out, "- Bootable on: {}", entry.bootable_on)?;
+                if !entry.boot_reason.is_empty() {
+                    writeln!(out, "  - {}", entry.boot_reason)?;
                 }
             }
             if entry.characteristics.is_empty() {
