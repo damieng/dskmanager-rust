@@ -102,6 +102,24 @@ fn history_path() -> Option<std::path::PathBuf> {
     })
 }
 
+/// Open an image for the REPL, printing the result (and any warnings).
+/// Returns `None` on failure so the caller can keep any current image.
+fn open_image(path: &str) -> Option<DiskImage> {
+    match DiskImage::open(path) {
+        Ok(img) => {
+            println!("Opened: {}", path);
+            for w in img.warnings() {
+                println!("Warning: {}", w);
+            }
+            Some(img)
+        }
+        Err(e) => {
+            println!("Error: {}", e);
+            None
+        }
+    }
+}
+
 fn main() {
     // Batch subcommand: `dsk report <dir> [output] [--format csv|markdown]`.
     // Runs non-interactively and exits without starting the REPL.
@@ -125,6 +143,9 @@ fn main() {
             println!("      --filter-protection [text]    Any protection, or substring on name");
             println!("      --filter-has-errors           Has FDC errors");
             println!("      --filter-quirks               Has non-standard characteristics");
+            println!();
+            println!("  <file>");
+            println!("      Open the given disk image, then start the interactive REPL.");
             println!();
             println!("  (no arguments)");
             println!("      Start the interactive REPL for exploring disk images.");
@@ -151,7 +172,11 @@ fn main() {
         let _ = rl.load_history(&history_path);
     }
 
-    let mut image: Option<DiskImage> = None;
+    // If a path to a file was given on the command line, open it on startup.
+    let mut image: Option<DiskImage> = match args.get(1) {
+        Some(path) if std::path::Path::new(path).is_file() => open_image(path),
+        _ => None,
+    };
     let mut filesystem_mode = FileSystemType::Auto;
 
     loop {
@@ -207,15 +232,8 @@ fn main() {
                     println!("Usage: open <path>");
                     continue;
                 }
-                match DiskImage::open(&parts[1]) {
-                    Ok(img) => {
-                        println!("Opened: {}", parts[1]);
-                        for w in img.warnings() {
-                            println!("Warning: {}", w);
-                        }
-                        image = Some(img);
-                    }
-                    Err(e) => println!("Error: {}", e),
+                if let Some(img) = open_image(&parts[1]) {
+                    image = Some(img);
                 }
             }
             "create" => {
