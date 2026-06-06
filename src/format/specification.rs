@@ -611,16 +611,24 @@ fn parse_spec_block(spec: &mut DiskSpecification, sector_data: &[u8]) {
 
     // Parse sector size (stored as log2(size) - 7)
     let size_code = sector_data[4];
-    let calculated_size = 1u16 << (size_code + 7);
-    if calculated_size <= 8192 {
-        spec.sector_size = calculated_size;
-        spec.fdc_sector_size = size_code;
+    if size_code <= 8 {
+        let calculated_size = 1u16 << (size_code + 7);
+        if calculated_size <= 8192 {
+            spec.sector_size = calculated_size;
+            spec.fdc_sector_size = size_code;
+        } else {
+            spec.sector_size = 0;
+        }
     } else {
         spec.sector_size = 0;
     }
 
     spec.reserved_tracks = sector_data[5];
-    spec.block_shift = sector_data[6];
+    spec.block_shift = if sector_data[6] <= 24 {
+        sector_data[6]
+    } else {
+        0
+    };
     spec.directory_blocks = sector_data[7];
     spec.gap_read_write = sector_data[8];
     spec.gap_format = sector_data[9];

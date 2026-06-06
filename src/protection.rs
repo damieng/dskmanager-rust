@@ -13,6 +13,8 @@ pub struct ProtectionResult {
     pub name: String,
     /// Description of why this protection was detected
     pub reason: String,
+    /// Extra detail lines (e.g. Alkatraz protection track analysis)
+    pub details: Vec<String>,
 }
 
 impl ProtectionResult {
@@ -20,6 +22,7 @@ impl ProtectionResult {
         Self {
             name: name.into(),
             reason: reason.into(),
+            details: Vec::new(),
         }
     }
 
@@ -27,6 +30,7 @@ impl ProtectionResult {
         Self {
             name: name.into(),
             reason: format!("probably, {}", reason.into()),
+            details: Vec::new(),
         }
     }
 
@@ -34,13 +38,18 @@ impl ProtectionResult {
         Self {
             name: name.into(),
             reason: format!("maybe, {}", reason.into()),
+            details: Vec::new(),
         }
     }
 }
 
 impl std::fmt::Display for ProtectionResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.name, self.reason)
+        write!(f, "{} ({})", self.name, self.reason)?;
+        for line in &self.details {
+            write!(f, "\n  {}", line)?;
+        }
+        Ok(())
     }
 }
 
@@ -1046,6 +1055,115 @@ fn sweep_mid_disk(disk: &Disk, t0: &Track) -> Option<ProtectionResult> {
 }
 
 // ============================================================================
+// Alkatraz detail extraction
+// ============================================================================
+
+fn find_alkatraz_protection_track(disk: &Disk) -> Option<(usize, &Track)> {
+    let limit = disk.track_count().min(42);
+    for t in 0..limit {
+        let track = disk.get_track(t as u8)?;
+        if track.sector_count() == 18 {
+            if let Some(s0) = track.get_sector_by_index(0) {
+                if s0.actual_size() == 256 || s0.advertised_size() == 256 {
+                    return Some((t, track));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn analyze_alkatraz(disk: &Disk) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if let Some((prot_track_idx, prot_track)) = find_alkatraz_protection_track(disk) {
+        let boundary = prot_track_idx + 1;
+        lines.push(format!("Protection track: T{} (BOUNDRY={})", prot_track_idx, boundary));
+
+        let mut btrnum: Option<u8> = None;
+        let mut sector_rs: Vec<u8> = Vec::new();
+        let mut head_hs: Vec<u8> = Vec::new();
+        let mut fill_bytes: Vec<u8> = Vec::new();
+        let mut uniform_c = true;
+
+        for i in 0..prot_track.sector_count() {
+            if let Some(sector) = prot_track.get_sector_by_index(i) {
+                let c = sector.id.track;
+                match btrnum {
+                    None => btrnum = Some(c),
+                    Some(prev) if prev != c => uniform_c = false,
+                    _ => {}
+                }
+                sector_rs.push(sector.id.sector);
+                head_hs.push(sector.id.side);
+                if let Some(&first_byte) = sector.data().first() {
+                    fill_bytes.push(first_byte);
+                }
+            }
+        }
+
+        if let Some(btr) = btrnum {
+            lines.push(format!("BTRNUM: 0x{:02X} ({})", btr, btr));
+        }
+
+        if !uniform_c {
+            lines.push("C values vary across sectors (non-standard)".to_string());
+        }
+
+        lines.push(format!("GAP3: {}", prot_track.gap3_length));
+
+        lines.push(format!("{} sectors x {}B", prot_track.sector_count(),
+            prot_track.uniform_sector_size().unwrap_or(256)));
+
+        let fmt_ids = |vals: &[u8]| -> String {
+            if vals.len() <= 8 {
+                vals.iter().map(|v| format!("0x{:02X}", v)).collect::<Vec<_>>().join(", ")
+            } else {
+                let first: Vec<String> = vals[..4].iter().map(|v| format!("0x{:02X}", v)).collect();
+                let last: Vec<String> = vals[vals.len()-4..].iter().map(|v| format!("0x{:02X}", v)).collect();
+                format!("{}, ..., {}", first.join(", "), last.join(", "))
+            }
+        };
+
+        lines.push(format!("Sector IDs (R): [{}]", fmt_ids(&sector_rs)));
+        lines.push(format!("Head values (H): [{}]", fmt_ids(&head_hs)));
+        lines.push(format!("Fill bytes: [{}]", fmt_ids(&fill_bytes)));
+    }
+
+    if let Some(t0) = disk.get_track(0) {
+        if let Some(s0) = t0.get_sector_by_index(0) {
+            let data = s0.data();
+            if data.len() >= 512 {
+                let u16_le = |off: usize| -> u16 {
+                    u16::from_le_bytes([data[off], data[off + 1]])
+                };
+
+                let scrncol = u16_le(504);
+                let bordercl = u16_le(506);
+                let llen1 = u16_le(508);
+                let lsta = u16_le(510);
+
+                if lsta > 0 || llen1 > 0 {
+                    lines.push(format!("Loader: ${:04X} ({} bytes)", lsta, llen1));
+                }
+                if scrncol > 0 || bordercl > 0 {
+                    lines.push(format!("Screen: attr=0x{:02X} border=0x{:02X}", scrncol as u8, bordercl as u8));
+                }
+            }
+        }
+    }
+
+    lines
+}
+
+fn attach_alkatraz_details(result: &mut ProtectionResult, disk: &Disk) {
+    let details = analyze_alkatraz(disk);
+    if !details.is_empty() {
+        result.details = details;
+    }
+}
+
+// ============================================================================
 // Stripped-FDC fallbacks (§9)
 // ============================================================================
 
@@ -1112,6 +1230,17 @@ fn stripped_fdc_fallbacks(disk: &Disk, t0: &Track) -> Option<ProtectionResult> {
 /// Uses a fingerprinting flow: T0 signatures → T0 geometry classification →
 /// resolvers → T1 checks → high-track probes → mid-disk sweep.
 pub fn detect(disk: &Disk) -> Option<ProtectionResult> {
+    let result = detect_inner(disk)?;
+    if result.name.contains("Alkatraz") {
+        let mut result = result;
+        attach_alkatraz_details(&mut result, disk);
+        Some(result)
+    } else {
+        Some(result)
+    }
+}
+
+fn detect_inner(disk: &Disk) -> Option<ProtectionResult> {
     if disk.track_count() < 2 {
         return None;
     }
@@ -1297,6 +1426,7 @@ impl ProtectionResult {
         Self {
             name: name.into(),
             reason: reason.into(),
+            details: Vec::new(),
         }
     }
 }
@@ -1659,5 +1789,131 @@ mod tests {
             ddam_t0.add_sector(s);
         }
         assert_eq!(classify_t0(&ddam_t0), T0Class::TenSectorDDAM);
+    }
+
+    #[test]
+    fn test_alkatraz_details_signed() {
+        let mut disk = Disk::new(0);
+
+        let mut t0 = Track::new(0, 0);
+        let mut boot_data = vec![0x00u8; 512];
+        let sig = b" THE ALKATRAZ PROTECTION SYSTEM   (C) 1987  Appleby Associates";
+        boot_data[..sig.len()].copy_from_slice(sig);
+        boot_data[504] = 0x38;
+        boot_data[505] = 0x00;
+        boot_data[506] = 0x02;
+        boot_data[507] = 0x00;
+        boot_data[508] = 0x00;
+        boot_data[509] = 0x1C;
+        boot_data[510] = 0x00;
+        boot_data[511] = 0x80;
+        t0.add_sector(Sector::with_data(SectorId::new(0, 0, 1, 2), boot_data));
+        for r in 2u8..=9 {
+            t0.add_sector(Sector::new(SectorId::new(0, 0, r, 2)));
+        }
+        disk.add_track(t0);
+
+        for t in 1u8..5 {
+            let mut track = Track::new(t, 0);
+            for r in 1u8..=9 {
+                track.add_sector(Sector::new(SectorId::new(t, 0, r, 2)));
+            }
+            disk.add_track(track);
+        }
+
+        let mut prot_track = Track::new(5, 0);
+        prot_track.gap3_length = 12;
+        let btrnum: u8 = 0xE9;
+        for i in 0u8..18 {
+            let fill = 0xAA + i;
+            let r_val = 0xC1u8.wrapping_add(i.wrapping_mul(7));
+            let h_val = (i as u8).wrapping_mul(32) & 0xF8;
+            let s = Sector::with_data(
+                SectorId::new(btrnum, h_val, r_val, 1),
+                vec![fill; 256],
+            );
+            prot_track.add_sector(s);
+        }
+        disk.add_track(prot_track);
+
+        for t in 6u8..10 {
+            let mut track = Track::new(t, 0);
+            for r in 1u8..=9 {
+                track.add_sector(Sector::new(SectorId::new(t, 0, r, 2)));
+            }
+            disk.add_track(track);
+        }
+
+        let result = detect(&disk).expect("signed Alkatraz should be detected");
+        assert_eq!(result.name, "Alkatraz +3");
+        assert!(!result.details.is_empty(), "should have details");
+
+        let joined = result.details.join("\n");
+        assert!(joined.contains("Protection track: T5"), "should mention track 5, got: {}", joined);
+        assert!(joined.contains("BOUNDRY=6"), "should mention BOUNDRY, got: {}", joined);
+        assert!(joined.contains("BTRNUM: 0xE9"), "should mention BTRNUM, got: {}", joined);
+        assert!(joined.contains("GAP3: 12"), "should mention GAP3, got: {}", joined);
+        assert!(joined.contains("18 sectors x 256B"), "should mention sector layout, got: {}", joined);
+        assert!(joined.contains("Loader: $8000"), "should mention loader address, got: {}", joined);
+    }
+
+    #[test]
+    fn test_alkatraz_details_no_protection_track() {
+        let mut disk = Disk::new(0);
+
+        let mut t0 = Track::new(0, 0);
+        let mut boot_data = vec![0x00u8; 512];
+        let sig = b" THE ALKATRAZ PROTECTION SYSTEM   (C) 1987  Appleby Associates";
+        boot_data[..sig.len()].copy_from_slice(sig);
+        t0.add_sector(Sector::with_data(SectorId::new(0, 0, 1, 2), boot_data));
+        for r in 2u8..=8 {
+            t0.add_sector(Sector::new(SectorId::new(0, 0, r, 2)));
+        }
+        disk.add_track(t0);
+
+        for t in 1u8..10 {
+            let mut track = Track::new(t, 0);
+            for r in 1u8..=9 {
+                track.add_sector(Sector::new(SectorId::new(t, 0, r, 2)));
+            }
+            disk.add_track(track);
+        }
+
+        let result = detect(&disk).expect("should detect Alkatraz");
+        assert_eq!(result.name, "Alkatraz +3");
+        assert!(result.details.is_empty() || !result.details.iter().any(|d| d.contains("Protection track")),
+            "no protection track details expected when no 18-sector track present");
+    }
+
+    #[test]
+    fn test_non_alkatraz_has_no_details() {
+        let mut disk = Disk::new(0);
+
+        let mut t0 = Track::new(0, 0);
+        for r in 1u8..=9 {
+            let mut s = Sector::new(SectorId::new(0, 0, r, 2));
+            if r >= 7 {
+                s.fdc_status2 = FdcStatus2::new(FdcStatus2::CM);
+            }
+            t0.add_sector(s);
+        }
+        disk.add_track(t0);
+
+        let mut t1 = Track::new(1, 0);
+        for r in 1u8..=5 {
+            t1.add_sector(Sector::new(SectorId::new(1, 0, r, 3)));
+        }
+        disk.add_track(t1);
+
+        for t in 2u8..10 {
+            let mut track = Track::new(t, 0);
+            for r in 1u8..=9 {
+                track.add_sector(Sector::new(SectorId::new(t, 0, r, 2)));
+            }
+            disk.add_track(track);
+        }
+
+        let result = detect(&disk).expect("Speedlock should be detected");
+        assert!(result.details.is_empty(), "non-Alkatraz should have no details");
     }
 }

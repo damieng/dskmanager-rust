@@ -16,11 +16,32 @@
 //! (`.csv` / `.md`), defaulting to CSV.
 
 use std::collections::BTreeMap;
+use std::cell::RefCell;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+
 use dskmanager::*;
+
+thread_local! {
+    static CURRENT_FILE: RefCell<String> = RefCell::new(String::new());
+}
+
+fn set_current_file(path: &str) {
+    CURRENT_FILE.with(|f| *f.borrow_mut() = path.to_string());
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let file = CURRENT_FILE.with(|f| f.borrow().clone());
+        if !file.is_empty() {
+            eprintln!("\nPanic while processing: {}", file);
+        }
+        default_hook(info);
+    }));
+}
 
 /// Output format for the report.
 enum Format {
@@ -113,6 +134,7 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     let mut counts = Counts::default();
+    install_panic_hook();
 
     match format {
         Format::Csv => {
@@ -141,6 +163,7 @@ pub fn run(args: &[String]) -> i32 {
                         title,
                         format: "Error".to_string(),
                         protection: format!("Failed to parse: {}", e),
+                        protection_details: vec![],
                         characteristics: vec![],
                     },
                 };
@@ -218,6 +241,7 @@ fn walk(
         match ext.as_deref() {
             Some("dsk") => {
                 counts.dsks += 1;
+                set_current_file(&path.display().to_string());
                 let image = DiskImage::open(&path).map_err(|e| e.to_string());
                 if image.is_err() {
                     counts.errors += 1;
@@ -282,7 +306,7 @@ fn scan_zip(
         counts.dsks += 1;
         counts.dsks_from_zips += 1;
         let title = format!("{} → {}", zip_rel, name);
-
+        set_current_file(&title);
         let image = open_bytes(&bytes);
         if image.is_err() {
             counts.errors += 1;
@@ -347,7 +371,12 @@ fn csv_row(title: &str, image: &DiskImage) -> String {
     let mut protections = Vec::new();
     for disk in image.disks() {
         if let Some(prot) = protection::detect(disk) {
-            protections.push(format!("{} | {}", prot.name, prot.reason));
+            let mut entry = format!("{} | {}", prot.name, prot.reason);
+            if !prot.details.is_empty() {
+                entry.push_str(" | ");
+                entry.push_str(&prot.details.join(" | "));
+            }
+            protections.push(entry);
         }
     }
     let protection_str = if protections.is_empty() {
@@ -773,6 +802,7 @@ struct DiskEntry {
     title: String,
     format: String,
     protection: String,
+    protection_details: Vec<String>,
     characteristics: Vec<String>,
 }
 
@@ -780,12 +810,18 @@ fn analyze_image(image: &DiskImage) -> DiskEntry {
     let spec = DiskSpecification::identify(image);
 
     let mut prot_strs = Vec::new();
+    let mut all_details = Vec::new();
     for (side_idx, disk) in image.disks().iter().enumerate() {
         if let Some(p) = protection::detect(disk) {
             if image.disks().len() > 1 {
                 prot_strs.push(format!("Side {}: {} ({})", side_idx, p.name, p.reason));
+                if !p.details.is_empty() {
+                    all_details.push(format!("Side {}:", side_idx));
+                    all_details.extend(p.details.clone());
+                }
             } else {
                 prot_strs.push(format!("{} ({})", p.name, p.reason));
+                all_details.extend(p.details);
             }
         }
     }
@@ -801,6 +837,7 @@ fn analyze_image(image: &DiskImage) -> DiskEntry {
         title: String::new(),
         format: spec.format,
         protection,
+        protection_details: all_details,
         characteristics,
     }
 }
@@ -1161,6 +1198,12 @@ fn write_markdown(
             writeln!(out)?;
             writeln!(out, "- Format: {}", entry.format)?;
             writeln!(out, "- Protection: {}", entry.protection)?;
+            if !entry.protection_details.is_empty() {
+                writeln!(out, "  - Details:")?;
+                for d in &entry.protection_details {
+                    writeln!(out, "    - {}", d)?;
+                }
+            }
             if entry.characteristics.is_empty() {
                 writeln!(out, "- Characteristics: standard")?;
             } else {

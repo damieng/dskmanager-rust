@@ -106,8 +106,27 @@ fn main() {
     // Batch subcommand: `dsk report <dir> [output] [--format csv|markdown]`.
     // Runs non-interactively and exits without starting the REPL.
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("report") {
-        std::process::exit(report::run(&args[2..]));
+    match args.get(1).map(|s| s.as_str()) {
+        Some("--help") | Some("-h") => {
+            println!("Usage: dsk [command]");
+            println!();
+            println!("Commands:");
+            println!("  report <dir> [output] [--format csv|markdown]");
+            println!("      Batch-analyze .dsk files in <dir> (including inside .zip archives).");
+            println!("      Writes a report to [output] (stdout if omitted).");
+            println!("      Format defaults to CSV, or inferred from extension (.csv / .md).");
+            println!();
+            println!("  (no arguments)");
+            println!("      Start the interactive REPL for exploring disk images.");
+            println!();
+            println!("Options:");
+            println!("  -h, --help    Show this help message");
+            return;
+        }
+        Some("report") => {
+            std::process::exit(report::run(&args[2..]));
+        }
+        _ => {}
     }
 
     println!("=== DSKManager ===");
@@ -590,10 +609,18 @@ fn main() {
                     let has_multiple_sides = img.disks().len() > 1;
                     for (side_idx, disk) in img.disks().iter().enumerate() {
                         if let Some(result) = dskmanager::protection::detect(disk) {
-                            if has_multiple_sides {
-                                println!("Side {}: {} [{}]", side_idx, result.name, result.reason);
+                            let prefix = if has_multiple_sides {
+                                format!("Side {}: ", side_idx)
                             } else {
-                                println!("{} [{}]", result.name, result.reason);
+                                String::new()
+                            };
+                            if result.details.is_empty() {
+                                println!("{}{} [{}]", prefix, result.name, result.reason);
+                            } else {
+                                println!("{}{} [{}]", prefix, result.name, result.reason);
+                                for line in &result.details {
+                                    println!("  {}", line);
+                                }
                             }
                             found_any = true;
                         }
