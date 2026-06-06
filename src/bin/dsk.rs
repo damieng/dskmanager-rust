@@ -111,8 +111,9 @@ fn main() {
             println!("Usage: dsk [command]");
             println!();
             println!("Commands:");
-            println!("  report <dir> [output] [--format csv|markdown]");
-            println!("      Batch-analyze .dsk files in <dir> (including inside .zip archives).");
+            println!("  report <pattern> [output] [--format csv|markdown]");
+            println!("      Batch-analyze .dsk files matching <pattern> (dir, glob, or single file).");
+            println!("      Also scans inside .zip archives found in the pattern.");
             println!("      Writes a report to [output] (stdout if omitted).");
             println!("      Format defaults to CSV, or inferred from extension (.csv / .md).");
             println!();

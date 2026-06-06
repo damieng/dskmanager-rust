@@ -108,10 +108,10 @@ pub fn run(args: &[String]) -> i32 {
         i += 1;
     }
 
-    let root = match positional.first() {
-        Some(dir) => PathBuf::from(dir),
+    let pattern = match positional.first() {
+        Some(p) => p.clone(),
         None => {
-            eprintln!("Usage: dsk report <root-dir> [output] [--format csv|markdown]");
+            eprintln!("Usage: dsk report <pattern> [output] [--format csv|markdown]");
             return 1;
         }
     };
@@ -136,13 +136,20 @@ pub fn run(args: &[String]) -> i32 {
     let mut counts = Counts::default();
     install_panic_hook();
 
+    let files = expand_pattern(&pattern);
+    if files.is_empty() {
+        eprintln!("No .dsk files found matching: {}", pattern);
+        return 1;
+    }
+    let root = common_root(&files);
+
     match format {
         Format::Csv => {
             if writeln!(writer, "{}", CSV_HEADER).is_err() {
                 eprintln!("Failed to write output");
                 return 1;
             }
-            walk(&root, &root, &mut counts, &mut |title, _folder, image| {
+            process_files(&root, &files, &mut counts, &mut |title, _folder, image| {
                 let line = match image {
                     Ok(img) => csv_row(&title, &img),
                     Err(e) => csv_error_row(&title, &e),
@@ -152,7 +159,7 @@ pub fn run(args: &[String]) -> i32 {
         }
         Format::Markdown => {
             let mut sections: BTreeMap<String, Vec<DiskEntry>> = BTreeMap::new();
-            walk(&root, &root, &mut counts, &mut |title, folder, image| {
+            process_files(&root, &files, &mut counts, &mut |title, folder, image| {
                 let entry = match image {
                     Ok(img) => {
                         let mut entry = analyze_image(&img);
@@ -201,56 +208,139 @@ fn infer_format(output: Option<&String>) -> Option<Format> {
 }
 
 // ---------------------------------------------------------------------------
-// Directory walk (shared by both output formats)
+// Pattern expansion and file processing (shared by both output formats)
 // ---------------------------------------------------------------------------
 
-/// Recursively walk `current`, invoking `emit(title, top_folder, image)` for
-/// every `.dsk` file found directly or inside a `.zip` archive.
-fn walk(
-    root: &Path,
-    current: &Path,
-    counts: &mut Counts,
-    emit: &mut dyn FnMut(String, String, std::result::Result<DiskImage, String>),
-) {
-    let entries = match fs::read_dir(current) {
+/// Expand a pattern into a sorted list of `.dsk` and `.zip` file paths.
+///
+/// - If the pattern is a directory, recursively finds all `.dsk`/`.zip` files.
+/// - If the pattern contains `*` or `?`, uses Windows-style glob expansion.
+/// - If the pattern is a single file, returns it as-is.
+fn expand_pattern(pattern: &str) -> Vec<PathBuf> {
+    let path = PathBuf::from(pattern);
+
+    if path.is_dir() {
+        return walk_dir(&path);
+    }
+
+    if pattern.contains('*') || pattern.contains('?') {
+        return expand_glob(pattern);
+    }
+
+    if path.is_file() {
+        vec![path]
+    } else {
+        eprintln!("Path not found: {}", pattern);
+        vec![]
+    }
+}
+
+fn walk_dir(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(e) => {
-            eprintln!("read_dir {}: {}", current.display(), e);
-            return;
-        }
+        Err(_) => return files,
     };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // Skip macOS metadata sidecar folders that mirror file names.
-        if name == ".AppleDouble" || name == "__MACOSX" {
+        if name == ".AppleDouble" || name == "__MACOSX" || name.starts_with("._") {
             continue;
         }
         if path.is_dir() {
-            walk(root, &path, counts, emit);
+            files.extend(walk_dir(&path));
             continue;
         }
-        // Skip macOS resource-fork prefix files.
-        if name.starts_with("._") {
+        let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase());
+        if matches!(ext.as_deref(), Some("dsk") | Some("zip")) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+fn expand_glob(pattern: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+
+    let root = glob_root(pattern);
+    if !root.is_dir() {
+        eprintln!("Glob base directory not found: {}", root.display());
+        return files;
+    }
+
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "dir", "/B", "/S", pattern]);
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(_) => return files,
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let path = PathBuf::from(line.trim());
+        if !path.is_file() {
             continue;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase());
+        let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase());
+        if matches!(ext.as_deref(), Some("dsk") | Some("zip")) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+fn glob_root(pattern: &str) -> PathBuf {
+    let path = PathBuf::from(pattern);
+    let mut root = PathBuf::new();
+    for component in path.components() {
+        let s = component.as_os_str().to_string_lossy();
+        if s.contains('*') || s.contains('?') {
+            break;
+        }
+        root.push(component);
+    }
+    if root.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        root
+    }
+}
+
+fn common_root(files: &[PathBuf]) -> PathBuf {
+    if files.is_empty() {
+        return PathBuf::from(".");
+    }
+    let mut root = files[0].clone();
+    root.pop();
+    if root.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        root
+    }
+}
+
+fn process_files(
+    root: &Path,
+    files: &[PathBuf],
+    counts: &mut Counts,
+    emit: &mut dyn FnMut(String, String, std::result::Result<DiskImage, String>),
+) {
+    for path in files {
+        let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase());
         match ext.as_deref() {
             Some("dsk") => {
                 counts.dsks += 1;
                 set_current_file(&path.display().to_string());
-                let image = DiskImage::open(&path).map_err(|e| e.to_string());
+                let image = DiskImage::open(path).map_err(|e| e.to_string());
                 if image.is_err() {
                     counts.errors += 1;
                 }
-                emit(relative_display(root, &path), top_folder(root, &path), image);
+                emit(relative_display(root, path), top_folder(root, path), image);
                 progress(counts);
             }
             Some("zip") => {
-                scan_zip(root, &path, counts, emit);
+                scan_zip(root, path, counts, emit);
             }
             _ => {}
         }
