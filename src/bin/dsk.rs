@@ -4,6 +4,7 @@ use dez80::Instruction;
 
 use dskmanager::*;
 use dskmanager::amstrad_basic::decode_amstrad_basic_file;
+use dskmanager::filesystem::TrdosFileSystem;
 use dskmanager::sinclair_basic::decode_sinclair_basic_file;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -311,7 +312,6 @@ fn main() {
                                 Ok(fs) => {
                                     let mgt_info = fs.mgt().info();
                                     println!("MGT filesystem ({})", mgt_info.system_type);
-                                    // MGT uses sectors (512 bytes each)
                                     let sector_size = 512;
                                     let total_sectors = mgt_info.total_sectors;
                                     let free_sectors = mgt_info.free_sectors;
@@ -320,6 +320,20 @@ fn main() {
                                     println!("Usable capacity: {} KB", total_sectors * sector_size / 1024);
                                     println!("Free blocks: {}", free_sectors);
                                     println!("Free space: {} KB", free_sectors * sector_size / 1024);
+                                }
+                                Err(e) => println!("Error: {}", e),
+                            }
+                        }
+                        FileSystemType::Trdos => {
+                            match TrdosFileSystem::new(img) {
+                                Ok(fs) => {
+                                    let info = fs.info();
+                                    println!("{} filesystem", info.fs_type);
+                                    println!("Block size: {} bytes", info.block_size);
+                                    println!("Total blocks: {}", info.total_blocks);
+                                    println!("Usable capacity: {} KB", info.total_blocks * info.block_size / 1024);
+                                    println!("Free blocks: {}", info.free_blocks);
+                                    println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
                                 }
                                 Err(e) => println!("Error: {}", e),
                             }
@@ -356,6 +370,35 @@ fn main() {
                         FileSystemType::Mgt => {
                             match DiscipleFileSystem::new(img) {
                                 Ok(fs) => fs.read_dir_extended(),
+                                Err(e) => Err(e),
+                            }
+                        }
+                        FileSystemType::Trdos => {
+                            match TrdosFileSystem::new(img) {
+                                Ok(fs) => {
+                                    let trd_dir = fs.directory();
+                                    let mut ext_entries = Vec::new();
+                                    for e in trd_dir {
+                                        let header = crate::filesystem::FileHeader {
+                                            header_type: crate::filesystem::HeaderType::None,
+                                            checksum_valid: false,
+                                            file_size: e.sector_count as usize * 256,
+                                            header_size: 0,
+                                            meta: e.display_type(),
+                                        };
+                                        ext_entries.push(ExtendedDirEntry {
+                                            name: e.filename.clone(),
+                                            user: 0,
+                                            index: e.index,
+                                            blocks: e.sector_count as usize,
+                                            allocated: e.sector_count as usize * 256,
+                                            size: e.sector_count as usize * 256,
+                                            attributes: crate::filesystem::FileAttributes::default(),
+                                            header,
+                                        });
+                                    }
+                                    Ok(ext_entries)
+                                }
                                 Err(e) => Err(e),
                             }
                         }
@@ -438,6 +481,12 @@ fn main() {
                                 Err(e) => Err(e),
                             }
                         }
+                        FileSystemType::Trdos => {
+                            match TrdosFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(&parts[1]),
+                                Err(e) => Err(e),
+                            }
+                        }
                         FileSystemType::Cpm | FileSystemType::Auto => {
                             match CpmFileSystem::from_image(img) {
                                 Ok(fs) => fs.read_file(&parts[1]),
@@ -479,10 +528,15 @@ fn main() {
                                 Err(e) => Err(e),
                             }
                         }
+                        FileSystemType::Trdos => {
+                            match TrdosFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(&parts[1]),
+                                Err(e) => Err(e),
+                            }
+                        }
                         FileSystemType::Cpm | FileSystemType::Auto => {
                             match CpmFileSystem::from_image(img) {
                                 Ok(fs) => {
-                                    // Read with header to check if it's BASIC
                                     fs.read_file_binary(&parts[1], true)
                                 }
                                 Err(e) => Err(e),
@@ -492,7 +546,6 @@ fn main() {
 
                     match data_result {
                         Ok(data) => {
-                            // Try Amstrad BASIC first (AMSDOS)
                             match decode_amstrad_basic_file(&data) {
                                 Ok(Some(text)) => {
                                     print!("{}", text);
@@ -554,8 +607,13 @@ fn main() {
                     // MGT filesystems store metadata in directory entries, so raw mode is ignored
                     let data_result: Result<Vec<u8>> = match effective_fs {
                         FileSystemType::Mgt => {
-                            // Raw mode ignored for MGT - always truncate to real file length
                             match DiscipleFileSystem::new(img) {
+                                Ok(fs) => fs.read_file(src_filename),
+                                Err(e) => Err(e),
+                            }
+                        }
+                        FileSystemType::Trdos => {
+                            match TrdosFileSystem::new(img) {
                                 Ok(fs) => fs.read_file(src_filename),
                                 Err(e) => Err(e),
                             }
@@ -607,7 +665,7 @@ fn main() {
                         filesystem_mode
                     };
                     println!("Filesystem mode: {} (effective: {})", filesystem_mode, effective);
-                    println!("Options: auto, cpm, mgt");
+                    println!("Options: auto, cpm, mgt, trdos");
                 } else {
                     match FileSystemType::from_str(&parts[1]) {
                         Some(mode) => {
@@ -616,7 +674,7 @@ fn main() {
                         }
                         None => {
                             println!("Unknown filesystem type: {}", parts[1]);
-                            println!("Options: auto, cpm, mgt");
+                            println!("Options: auto, cpm, mgt, trdos");
                         }
                     }
                 }
@@ -840,7 +898,7 @@ fn print_help() {
     println!("  read-sector <s> <t> <id>       - Read and display a sector");
     println!();
     println!("Filesystem:");
-    println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
+    println!("  fs-switch [auto|cpm|mgt|trdos]  - Show or set filesystem type (auto detects from image format)");
     println!("  fs-list                        - List files on disk (also: dir, cat, ls)");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
     println!("  fs-show <filename>             - Display AMSDOS and PLUS3DOS BASIC files as text");

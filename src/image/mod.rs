@@ -46,6 +46,8 @@ impl DiskImage {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         if crate::io::json::is_json_file(&path) {
             crate::io::json::read_json(path)
+        } else if crate::io::is_trd_file(&path) {
+            crate::io::read_trd(path)
         } else if crate::io::is_mgt_file(&path) {
             crate::io::read_mgt(path)
         } else {

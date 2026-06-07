@@ -16,6 +16,7 @@ pub fn write_dsk<P: AsRef<Path>>(image: &DiskImage, path: P) -> Result<()> {
         DiskImageFormat::StandardDSK => write_standard_dsk(&mut file, image),
         DiskImageFormat::ExtendedDSK => write_extended_dsk(&mut file, image),
         DiskImageFormat::RawMgt => write_mgt(&mut file, image),
+        DiskImageFormat::RawTrd => write_trd(&mut file, image),
     }
 }
 
@@ -40,27 +41,60 @@ fn write_mgt(file: &mut File, image: &DiskImage) -> Result<()> {
                             if data.len() >= sector_size {
                                 file.write_all(&data[..sector_size])?;
                             } else {
-                                // Pad with zeros if sector is smaller
                                 file.write_all(data)?;
                                 let padding = vec![0u8; sector_size - data.len()];
                                 file.write_all(&padding)?;
                             }
                         } else {
-                            // Sector not found, write zeros
                             let zeros = vec![0u8; sector_size];
                             file.write_all(&zeros)?;
                         }
                     }
                 } else {
-                    // Track not found, write zeros
                     let zeros = vec![0u8; sectors_per_track * sector_size];
                     file.write_all(&zeros)?;
                 }
             }
         } else {
-            // Disk not found, write zeros for all tracks
             let zeros = vec![0u8; tracks_per_side * sectors_per_track * sector_size];
             file.write_all(&zeros)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a raw TRD file
+fn write_trd(file: &mut File, image: &DiskImage) -> Result<()> {
+    // TRD format: single-sided, sequential tracks
+    // 80 tracks, 16 sectors per track, 256 bytes per sector
+
+    let num_tracks = image.spec.num_tracks as usize;
+    let sectors_per_track = 16usize;
+    let sector_size = 256usize;
+
+    if let Some(disk) = image.disks.get(0) {
+        for track_num in 0..num_tracks {
+            if let Some(track) = disk.get_track(track_num as u8) {
+                for sector_id in 1..=sectors_per_track as u8 {
+                    if let Some(sector) = track.get_sector(sector_id) {
+                        let data = sector.data();
+                        if data.len() >= sector_size {
+                            file.write_all(&data[..sector_size])?;
+                        } else {
+                            file.write_all(data)?;
+                            let padding = vec![0u8; sector_size - data.len()];
+                            file.write_all(&padding)?;
+                        }
+                    } else {
+                        let zeros = vec![0u8; sector_size];
+                        file.write_all(&zeros)?;
+                    }
+                }
+            } else {
+                let zeros = vec![0u8; sectors_per_track * sector_size];
+                file.write_all(&zeros)?;
+            }
         }
     }
 

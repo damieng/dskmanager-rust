@@ -49,6 +49,9 @@ pub fn read_dsk<P: AsRef<Path>>(path: P) -> Result<DiskImage> {
         DiskImageFormat::RawMgt => {
             return Err(DskError::invalid_format("RawMgt format should use read_mgt"))
         }
+        DiskImageFormat::RawTrd => {
+            return Err(DskError::invalid_format("RawTrd format should use read_trd"))
+        }
     };
 
     image.warnings = warnings;
@@ -71,6 +74,7 @@ fn has_creator_signature(disk_info: &[u8], format: DiskImageFormat) -> bool {
         DiskImageFormat::ExtendedDSK => EXTENDED_DSK_SIGNATURE,
         DiskImageFormat::StandardDSK => STANDARD_DSK_SIGNATURE,
         DiskImageFormat::RawMgt => return true,
+        DiskImageFormat::RawTrd => return true,
     };
     // Compare the 34-byte descriptor; a difference means embedded creator text.
     disk_info[..DISK_INFO_CREATOR_OFFSET] != canonical[..DISK_INFO_CREATOR_OFFSET]

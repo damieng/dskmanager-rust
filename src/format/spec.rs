@@ -194,6 +194,21 @@ impl FormatSpec {
         }
     }
 
+    /// TR-DOS format (80 tracks, 16 sectors, 256 bytes, single-sided)
+    pub fn trdos() -> Self {
+        Self {
+            num_sides: 1,
+            num_tracks: 80,
+            sectors_per_track: 16,
+            sector_size: 256,
+            first_sector_id: 0x01,
+            gap3_length: 0x1B,
+            filler_byte: 0x00,
+            interleave: 1,
+            side_mode: SideMode::SingleSide,
+        }
+    }
+
     /// Calculate total disk capacity in bytes
     pub fn total_capacity(&self) -> usize {
         self.num_sides as usize

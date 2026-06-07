@@ -24,6 +24,8 @@ pub enum DiskImageFormat {
     ExtendedDSK,
     /// Raw MGT format (819,200 byte sector dump)
     RawMgt,
+    /// Raw TRD format (TR-DOS sector dump, 655,360 bytes)
+    RawTrd,
 }
 
 impl DiskImageFormat {
@@ -33,6 +35,7 @@ impl DiskImageFormat {
             DiskImageFormat::StandardDSK => STANDARD_DSK_SIGNATURE,
             DiskImageFormat::ExtendedDSK => EXTENDED_DSK_SIGNATURE,
             DiskImageFormat::RawMgt => &[], // Raw MGT has no magic bytes
+            DiskImageFormat::RawTrd => &[], // Raw TRD has no magic bytes
         }
     }
 
@@ -42,6 +45,7 @@ impl DiskImageFormat {
             DiskImageFormat::StandardDSK => "Standard DSK",
             DiskImageFormat::ExtendedDSK => "Extended DSK",
             DiskImageFormat::RawMgt => "Raw MGT",
+            DiskImageFormat::RawTrd => "TR-DOS (TRD)",
         }
     }
 
@@ -51,6 +55,7 @@ impl DiskImageFormat {
             DiskImageFormat::StandardDSK => FileSystemType::Cpm,
             DiskImageFormat::ExtendedDSK => FileSystemType::Cpm,
             DiskImageFormat::RawMgt => FileSystemType::Mgt,
+            DiskImageFormat::RawTrd => FileSystemType::Trdos,
         }
     }
 }

@@ -8,11 +8,14 @@ pub mod disciple;
 pub mod mgt;
 /// SAM Coupe filesystem implementation
 pub mod sam;
+/// TR-DOS filesystem implementation (ZX Spectrum Beta Disk Interface)
+pub mod trdos;
 
 pub use cpm::CpmFileSystem;
 pub use disciple::DiscipleFileSystem;
 pub use mgt::{MgtDirEntry, MgtFileSystem, MgtFileType, MgtSystemType};
 pub use sam::SamFileSystem;
+pub use trdos::{TrdosCatalog, TrdosDirEntry, TrdosFileSystem, TrdosFileType};
 
 use crate::error::Result;
 use crate::image::DiskImage;
@@ -27,6 +30,8 @@ pub enum FileSystemType {
     Cpm,
     /// MGT filesystem (DISCiPLE/+D, SAM Coupe)
     Mgt,
+    /// TR-DOS filesystem (ZX Spectrum Beta Disk Interface)
+    Trdos,
 }
 
 impl std::fmt::Display for FileSystemType {
@@ -35,6 +40,7 @@ impl std::fmt::Display for FileSystemType {
             FileSystemType::Auto => write!(f, "Auto"),
             FileSystemType::Cpm => write!(f, "CP/M"),
             FileSystemType::Mgt => write!(f, "MGT"),
+            FileSystemType::Trdos => write!(f, "TR-DOS"),
         }
     }
 }
@@ -46,6 +52,7 @@ impl FileSystemType {
             "auto" => Some(FileSystemType::Auto),
             "cpm" | "cp/m" => Some(FileSystemType::Cpm),
             "mgt" | "disciple" | "sam" => Some(FileSystemType::Mgt),
+            "trdos" | "tr-dos" | "trd" => Some(FileSystemType::Trdos),
             _ => None,
         }
     }

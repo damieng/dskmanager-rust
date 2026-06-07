@@ -4,6 +4,8 @@
 pub mod reader;
 /// Reader implementation for MGT files
 pub mod mgt_reader;
+/// Reader implementation for TRD files
+pub mod trd_reader;
 /// Writer implementation for DSK files
 pub mod writer;
 /// Reader/writer for JSON format
@@ -11,5 +13,6 @@ pub mod json;
 
 pub use json::{is_json_file, read_json, write_json};
 pub use mgt_reader::{is_mgt_file, read_mgt};
+pub use trd_reader::{is_trd_file, read_trd};
 pub use reader::read_dsk;
 pub use writer::write_dsk;

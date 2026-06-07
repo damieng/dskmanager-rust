@@ -1,6 +1,6 @@
 # DSK Manager
 
-A command-line tool and Rust library for reading, writing, and analyzing DSK and MGT disk image files. Built for retro computing enthusiasts working with Amstrad CPC, ZX Spectrum +3, Amstrad PCW, SAM Coupe, and IBM PC floppy images.
+A command-line tool and Rust library for reading, writing, and analyzing DSK, MGT, and TRD disk image files. Built for retro computing enthusiasts working with Amstrad CPC, ZX Spectrum +3, Amstrad PCW, SAM Coupe, and IBM PC floppy images.
 
 ## Install
 
@@ -19,6 +19,7 @@ You can also open a file directly from the command line:
 ```bash
 dsk disk.dsk
 dsk disk.mgt
+dsk disk.trd
 dsk disk.json
 ```
 
@@ -42,7 +43,7 @@ dsk disk.json
 
 | Command | Description |
 |---------|-------------|
-| `open <path>` | Open a .dsk, .mgt, or .json file |
+| `open <path>` | Open a .dsk, .mgt, .trd, or .json file |
 | `save <path>` | Save image (format determined by extension) |
 | `create [amstrad\|spectrum\|pcw]` | Create a new blank disk image |
 | `info` | Show disk information |
@@ -55,7 +56,7 @@ dsk disk.json
 | `fs-list` | List files on the disk (`cat`, `dir`, `ls` also work) |
 | `fs-read <filename>` | Display file contents |
 | `fs-export <filename> [output] [raw]` | Export file to host (strips headers unless `raw`) |
-| `fs-switch [auto\|cpm\|mgt]` | Switch filesystem driver |
+| `fs-switch [auto\|cpm\|mgt\|trdos]` | Switch filesystem driver |
 | `fs-info` | Show filesystem details |
 
 **Low-level**
@@ -85,6 +86,7 @@ dsk disk.json
 | Standard DSK | `.dsk` | Fixed track size (Amstrad CPC, Spectrum +3, PCW) |
 | Extended DSK | `.dsk` | Variable track sizes, SAMDisk V5 extensions |
 | MGT raw | `.mgt` | 800KB DSDD raw sector dump (SAM Coupe, DISCiPLE/+D) |
+| TRD raw | `.trd` | TR-DOS raw sector dump (ZX Spectrum Beta Disk Interface) — **experimental** |
 | JSON | `.json` | Human-readable, editable representation of any format |
 
 `open` and `save` detect the format from the file extension. You can open a `.dsk`, edit it, and `save` as `.json` — or vice versa. JSON files preserve all metadata (CHRN IDs, FDC status, per-sector data lengths) so the round-trip is lossless.
@@ -99,11 +101,13 @@ Built-in configurations for common formats:
 - IBM PC 360K/720K (40/80 tracks, 9 sectors, 512 bytes)
 - Tatung Einstein
 - MGT Disciple/+D/SAM Coupe
+- TR-DOS (80 tracks, 16 sectors, 256 bytes, single-sided)
 
 ### Filesystems
 
 - **CP/M** — read-only support for Amstrad CPC, Spectrum +3, PCW, and Tatung Einstein
 - **MGT** — read-only support for DISCiPLE/+D and SAM Coupe (SAMDOS, MasterDOS, BDOS)
+- **TR-DOS** — *experimental* read-only support for the ZX Spectrum Beta Disk Interface (directory listing and file extraction; writing not yet implemented)
 
 ### Copy protection detection
 

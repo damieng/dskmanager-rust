@@ -433,11 +433,13 @@ fn check_filesystem(image: &DiskImage, issues: &mut Vec<VerifyIssue>) {
         FileSystemType::Auto => return,
         FileSystemType::Cpm => FileSystemType::Cpm,
         FileSystemType::Mgt => FileSystemType::Mgt,
+        FileSystemType::Trdos => FileSystemType::Trdos,
     };
 
     match effective_fs {
         FileSystemType::Cpm => check_cpm_filesystem(image, issues),
         FileSystemType::Mgt => check_mgt_filesystem(image, issues),
+        FileSystemType::Trdos => {}
         FileSystemType::Auto => {}
     }
 }
