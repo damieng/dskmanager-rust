@@ -23,33 +23,33 @@ impl CommandCompleter {
     fn new() -> Self {
         Self {
             commands: vec![
-                "create",
-                "dasm",
-                "protection",
-                "disassemble",
-                "exit",
-                "fs-export",
-                "fs-info",
-                "fs-list",
-                "fs-read",
-                "fs-show",
-                "fs-switch",
-                "help",
-                "info",
+                "open",
                 "load",
+                "create",
+                "save",
+                "info",
+                "specification",
+                "spec",
+                "tracks",
+                "sectors",
+                "read-sector",
+                "fs-switch",
+                "fs-list",
                 "cat",
                 "dir",
                 "ls",
-                "map",
-                "open",
-                "quit",
-                "read-sector",
-                "save",
-                "sectors",
-                "specification",
-                "spec",
+                "fs-read",
+                "fs-show",
+                "fs-export",
+                "fs-info",
+                "protection",
+                "disassemble",
+                "dasm",
                 "strings",
-                "tracks",
+                "map",
+                "help",
+                "quit",
+                "exit",
             ],
         }
     }
@@ -818,27 +818,34 @@ fn parse_command_line(input: &str) -> Vec<String> {
 }
 
 fn print_help() {
-    println!("Available commands:");
+    println!("Disk Management:");
     println!("  open <path>                    - Open a disk image file (use quotes for paths with spaces)");
     println!("  create [amstrad|spectrum|pcw]  - Create a new DSK image");
+    println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
     println!("  info                           - Show disk information");
+    println!("  specification                  - Detect and display disk specification (spec)");
+    println!();
+    println!("Low-Level Access:");
     println!("  tracks                         - List all tracks");
     println!("  sectors [track] [side]         - List sectors (all or specific track/side)");
     println!("  read-sector <s> <t> <id>       - Read and display a sector");
-    println!("  fs-info                        - Show filesystem information");
-    println!("  fs-list                        - List files on disk");
+    println!();
+    println!("Filesystem:");
+    println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
+    println!("  fs-list                        - List files on disk (also: dir, cat, ls)");
     println!("  fs-read <filename>             - Read and hex dump file from disk");
     println!("  fs-show <filename>             - Display AMSDOS and PLUS3DOS BASIC files as text");
     println!("  fs-export <file> [output_path] [raw] - Export file from disk to host filesystem");
     println!("                                         (output_path defaults to filename if not specified)");
     println!("                                         (strips AMSDOS/PLUS3DOS headers by default, use 'raw' to preserve)");
-    println!("  fs-switch [auto|cpm|mgt]       - Show or set filesystem type (auto detects from image format)");
+    println!();
+    println!("Analysis:");
     println!("  protection                     - Detect copy protection scheme");
-    println!("  specification                  - Detect and display disk specification (spec)");
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
     println!("  map [side]                     - Visual sector map (white=ok, red=error, yellow=deleted)");
-    println!("  save <path>                    - Save image to file (use quotes for paths with spaces)");
+    println!();
+    println!("General:");
     println!("  help                           - Show this help");
     println!("  quit, exit                     - Exit");
 }

@@ -116,23 +116,32 @@ dsk
 
 Available commands:
 
+**Disk Management**
 - `open <path>` or `load <path>` - Open a DSK file
 - `create [amstrad|spectrum|pcw]` - Create a new DSK image
+- `save <path>` - Save image to file
 - `info` - Show disk information
 - `specification` or `spec` - Show the disk specification used to understand the FS/layout
+
+**Low-Level Access**
 - `tracks` - List all tracks
 - `sectors` - List all sectors
 - `read-sector <side> <track> <sector>` - Read and display a sector (sector can be decimal or hex like 0xC1)
-- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips header by default, use 'raw' to keep them)
-- `fs-list` - List files on the filesystem (CAT/DIR)
+
+**Filesystem**
 - `fs-mount` - Mount the file system
 - `fs-switch [auto|cpm|mgt]` - Switch between file systems. Defaults to `auto`, can also specify `cpm` or `mgt`
+- `fs-list` - List files on the filesystem (CAT/DIR)
 - `fs-read <filename>` - Read file from filesystem
+- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips header by default, use 'raw' to keep them)
+
+**Analysis**
 - `detect-protection` - Detect copy protection schemes on the disk
 - `disassemble [track] [sector]` or `dasm [track] [sector]` - Disassemble Z80 code from a sector
 - `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
 - `map [side]` - Visual sector map (▓=in-use, ░=empty, colored by status)
-- `save <path>` - Save image to file
+
+**General**
 - `help` - Show help
 - `quit` or `exit` - Exit
 
