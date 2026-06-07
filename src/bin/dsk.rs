@@ -47,6 +47,7 @@ impl CommandCompleter {
                 "dasm",
                 "strings",
                 "map",
+                "verify",
                 "help",
                 "quit",
                 "exit",
@@ -779,6 +780,14 @@ fn main() {
                     println!("No image loaded.");
                 }
             }
+            "verify" => {
+                if let Some(ref img) = image {
+                    let report = dskmanager::verify::verify(img);
+                    println!("{}", report);
+                } else {
+                    println!("No image loaded.");
+                }
+            }
             _ => {
                 println!("Unknown command: {}. Type 'help' for available commands.", command);
             }
@@ -844,6 +853,7 @@ fn print_help() {
     println!("  disassemble [track] [sector]   - Disassemble Z80 code from sector (dasm)");
     println!("  strings [len] [uniq] [charset] - Find strings (default: 4, 3, A-Za-z0-9...)");
     println!("  map [side]                     - Visual sector map (white=ok, red=error, yellow=deleted)");
+    println!("  verify                         - Verify disk image structure and filesystem integrity");
     println!();
     println!("General:");
     println!("  help                           - Show this help");

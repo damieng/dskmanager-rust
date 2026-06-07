@@ -140,6 +140,7 @@ Available commands:
 - `disassemble [track] [sector]` or `dasm [track] [sector]` - Disassemble Z80 code from a sector
 - `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
 - `map [side]` - Visual sector map (▓=in-use, ░=empty, colored by status)
+- `verify` - Verify disk image structure and filesystem integrity
 
 **General**
 - `help` - Show help

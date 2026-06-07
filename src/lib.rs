@@ -84,6 +84,8 @@ pub mod io;
 pub mod map;
 /// Copy protection detection
 pub mod protection;
+/// Disk image verification
+pub mod verify;
 
 // Re-export common types
 pub use amstrad_basic::{decode_amstrad_basic, decode_amstrad_basic_file, can_decode_amstrad_basic};
@@ -105,3 +107,4 @@ pub use image::{
     DataRate, Disk, DiskImage, DiskImageBuilder, RecordingMode, Sector, SectorId, SectorStatus,
     Track,
 };
+pub use verify::{verify, VerifyIssue, VerifyReport, Severity};
