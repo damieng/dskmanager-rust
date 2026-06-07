@@ -1,162 +1,97 @@
-# DSK Manager (Rust)
+# DSK Manager
 
-An idiomatic Rust library and cli for reading and writing DSK/MGT disk image files with CP/M and MGT filesystem support.
+A command-line tool and Rust library for reading, writing, and analyzing DSK and MGT disk image files. Built for retro computing enthusiasts working with Amstrad CPC, ZX Spectrum +3, Amstrad PCW, SAM Coupe, and IBM PC floppy images.
 
-## Features
+## Install
 
-- **DSK Format Support**: Read and write Standard DSK, Extended DSK and SamDisk extended formats
-- **Track & Sector Abstraction**: Low-level access to disk geometry with FDC status codes
-- **CP/M Filesystem**: Read files from CP/M filesystems (Amstrad CPC, Spectrum +3, PCW)
-- **Format Presets**: Built-in configurations for Amstrad CPC, Spectrum +3, PCW, and IBM PC formats
-- **Copy Protection Detection**: Automatic detection of 20+ copy protection schemes (Alkatraz, Speedlock, Hexagon, Frontier, and more)
-- **Comprehensive Testing**: Extensive unit and integration test coverage
-- **Interactive CLI**: Command-line tool for exploring DSK files
-
-## Quick Start
-
-### Installation
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-dskmanager = "0.1"
+```bash
+cargo install --path .
 ```
 
-### Basic Usage
-
-```rust
-use dskmanager::{DiskImage, FormatSpec, CpmFileSystem, FileSystem};
-
-// Open an existing DSK file
-let image = DiskImage::open("disk.dsk")?;
-
-// Read a sector
-let data = image.read_sector(0, 0, 0xC1)?;
-println!("Sector data: {} bytes", data.len());
-
-// Create a new DSK image
-let spec = FormatSpec::amstrad_data();
-let mut new_image = DiskImage::create(spec)?;
-
-// Write a sector
-let data = vec![0xE5; 512];
-new_image.write_sector(0, 0, 0xC1, &data)?;
-
-// Save the image
-new_image.save("new_disk.dsk")?;
-```
-
-### Detecting Copy Protection
-
-```rust
-use dskmanager::{DiskImage, protection};
-
-let image = DiskImage::open("game.dsk")?;
-
-// Check each side of the disk
-for (side_idx, disk) in image.disks().iter().enumerate() {
-    if let Some(result) = protection::detect(disk) {
-        println!("Side {}: {} [{}]", side_idx, result.name, result.reason);
-    }
-}
-```
-
-### Working with Filesystems
-
-```rust
-use dskmanager::{DiskImage, CpmFileSystem};
-
-let image = DiskImage::open("cpm_disk.dsk")?;
-let fs = CpmFileSystem::from_image(&image)?;
-
-// List files
-for entry in fs.read_dir()? {
-    println!("{}: {} bytes", entry.name, entry.size);
-}
-
-// Read a file
-let contents = fs.read_file("README.TXT")?;
-println!("File contents: {} bytes", contents.len());
-
-// Get filesystem info
-let info = fs.info();
-println!("Filesystem: {}", info.fs_type);
-println!("Free space: {} KB", info.free_blocks * info.block_size / 1024);
-```
-
-### Using the Builder Pattern
-
-```rust
-use dskmanager::{DiskImage, DiskImageFormat};
-
-let image = DiskImage::builder()
-    .format(DiskImageFormat::ExtendedDSK)
-    .num_sides(2)
-    .num_tracks(80)
-    .sectors_per_track(9)
-    .sector_size(512)
-    .build()?;
-```
-
-## Interactive CLI
-
-The library includes an interactive command-line tool for exploring DSK files:
+Or run directly:
 
 ```bash
 cargo run --bin dsk
 ```
 
-Or install it as a binary:
+You can also open a file directly from the command line:
 
 ```bash
-cargo install --path .
-dsk
+dsk disk.dsk
+dsk disk.mgt
+dsk disk.json
 ```
 
-Available commands:
+## CLI
 
-**Disk Management**
-- `open <path>` or `load <path>` - Open a DSK file
-- `create [amstrad|spectrum|pcw]` - Create a new DSK image
-- `save <path>` - Save image to file
-- `info` - Show disk information
-- `specification` or `spec` - Show the disk specification used to understand the FS/layout
+`dsk` is an interactive REPL for exploring disk images. Open a file and poke around:
 
-**Low-Level Access**
-- `tracks` - List all tracks
-- `sectors` - List all sectors
-- `read-sector <side> <track> <sector>` - Read and display a sector (sector can be decimal or hex like 0xC1)
+```
+> open game.dsk
+> info
+> tracks
+> sectors
+> fs-list
+> map
+> verify
+```
+
+### Commands
+
+**Disk management**
+
+| Command | Description |
+|---------|-------------|
+| `open <path>` | Open a .dsk, .mgt, or .json file |
+| `save <path>` | Save image (format determined by extension) |
+| `create [amstrad\|spectrum\|pcw]` | Create a new blank disk image |
+| `info` | Show disk information |
+| `spec` | Show the disk specification (geometry, filesystem layout) |
 
 **Filesystem**
-- `fs-mount` - Mount the file system
-- `fs-switch [auto|cpm|mgt]` - Switch between file systems. Defaults to `auto`, can also specify `cpm` or `mgt`
-- `fs-list` - List files on the filesystem (CAT/DIR)
-- `fs-read <filename>` - Read file from filesystem
-- `fs-export <filename> [output] [raw]` - Export file from disk to host filesystem (strips header by default, use 'raw' to keep them)
+
+| Command | Description |
+|---------|-------------|
+| `fs-list` | List files on the disk (`cat`, `dir`, `ls` also work) |
+| `fs-read <filename>` | Display file contents |
+| `fs-export <filename> [output] [raw]` | Export file to host (strips headers unless `raw`) |
+| `fs-switch [auto\|cpm\|mgt]` | Switch filesystem driver |
+| `fs-info` | Show filesystem details |
+
+**Low-level**
+
+| Command | Description |
+|---------|-------------|
+| `tracks` | List all tracks |
+| `sectors` | List all sectors |
+| `read-sector <side> <track> <sector>` | Dump a sector (sector ID can be hex like `0xC1`) |
 
 **Analysis**
-- `detect-protection` - Detect copy protection schemes on the disk
-- `disassemble [track] [sector]` or `dasm [track] [sector]` - Disassemble Z80 code from a sector
-- `strings [len] [uniq] [charset]` - Find strings in disk (reads logically)
-- `map [side]` - Visual sector map (▓=in-use, ░=empty, colored by status)
-- `verify` - Verify disk image structure and filesystem integrity
 
-**General**
-- `help` - Show help
-- `quit` or `exit` - Exit
+| Command | Description |
+|---------|-------------|
+| `detect-protection` | Detect copy protection schemes |
+| `disassemble [track] [sector]` | Disassemble Z80 code from a sector |
+| `strings [len] [uniq] [charset]` | Search for strings in the disk image |
+| `map [side]` | Visual sector map (`▓` = in use, `░` = empty) |
+| `verify` | Verify disk structure and filesystem integrity |
 
-## Supported Formats
+## File Formats
 
-### Disk Image File Formats
+### Disk image formats
 
-- **Standard DSK** (.DSK): Fixed track size format
-- **Extended DSK** (.DSK): Variable track sizes with SAMDisk V5 extensions
-- **MGT Raw** (.MGT): MGT Disciple/+D/SAM Coupe 800KB DSDD raw sector dumps
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| Standard DSK | `.dsk` | Fixed track size (Amstrad CPC, Spectrum +3, PCW) |
+| Extended DSK | `.dsk` | Variable track sizes, SAMDisk V5 extensions |
+| MGT raw | `.mgt` | 800KB DSDD raw sector dump (SAM Coupe, DISCiPLE/+D) |
+| JSON | `.json` | Human-readable, editable representation of any format |
 
-### Disk Formats
+`open` and `save` detect the format from the file extension. You can open a `.dsk`, edit it, and `save` as `.json` — or vice versa. JSON files preserve all metadata (CHRN IDs, FDC status, per-sector data lengths) so the round-trip is lossless.
 
-Presets for common formats:
+### Disk geometry presets
+
+Built-in configurations for common formats:
 
 - Amstrad CPC System/Data (40 tracks, 9 sectors, 512 bytes)
 - ZX Spectrum +3 (40 tracks, 9 sectors, 512 bytes)
@@ -167,90 +102,39 @@ Presets for common formats:
 
 ### Filesystems
 
-- **CP/M** (read-only support for Amstrad CPC, Spectrum +3, PCW, Tatung Einstein)
-- **MGT** (read-only support for MGT Disciple/+D and SAM Coupe)
-  - `DiscipleFileSystem` - For ZX Spectrum DISCiPLE/+D disks
-  - `SamFileSystem` - For SAM Coupe disks
-  - `MgtFileSystem` - Base implementation for MGT format disks
+- **CP/M** — read-only support for Amstrad CPC, Spectrum +3, PCW, and Tatung Einstein
+- **MGT** — read-only support for DISCiPLE/+D and SAM Coupe (SAMDOS, MasterDOS, BDOS)
 
-### Copy Protection Detection
+### Copy protection detection
 
-The library can automatically detect over 20 copy protection schemes commonly used on Amstrad CPC and ZX Spectrum +3 disks, including:
+Automatically detects 20+ copy protection schemes used on Amstrad CPC and ZX Spectrum +3 disks: Alkatraz, Speedlock, Hexagon, Frontier, Paul Owens, Three Inch Loader, P.M.S., DiscSYS, Mean Protection System, KBI-19, CAAV, KBI-10, and many more.
 
-- **Alkatraz** (CPC and +3 variants)
-- **Speedlock** (multiple versions from 1985-1990)
-- **Hexagon**
-- **Frontier**
-- **Paul Owens**
-- **Three Inch Loader** (multiple types)
-- **P.M.S.** (1986-1987)
-- **DiscSYS** / **Mean Protection System**
-- **KBI-19**, **CAAV**, **KBI-10**
-- **W.R.M. Disc Protection**
-- **Players**
-- **Rainbow Arts**
-- **Infogrames/Logiciel**
-- **ERE/Remi HERBULOT**
-- **Amsoft/EXOPAL**
-- **ARMOURLOC**
-- **Studio B** / **DiscLoc/Oddball**
-- **Laser Load by C.J. Pink**
-- And more...
+## Library
 
-Detection works by analyzing disk geometry, FDC status codes, and searching for known signatures in sector data. Both signed (with embedded signatures) and unsigned (pattern-based) protections are detected.
+DSK Manager is also a Rust library. Add it to your project:
 
-## Architecture
-
-The library uses an idiomatic Rust ownership-based design:
-
-```
-DiskImage (top-level)
-  └─ Vec<Disk> (one per side)
-      └─ Vec<Track>
-          └─ Vec<Sector>
-              └─ data: Vec<u8>
+```toml
+[dependencies]
+dskmanager = "0.1"
 ```
 
-Key design decisions:
+```rust
+use dskmanager::{DiskImage, FormatSpec, CpmFileSystem, FileSystem};
 
-- **No circular references**: Top-down ownership eliminates Rc/RefCell
-- **Zero-copy parsing** where possible
-- **Comprehensive error handling** with detailed context
-- **Builder pattern** for constructing images
-- **Trait-based** filesystem implementations
+let image = DiskImage::open("disk.dsk")?;
 
-## Testing
+let data = image.read_sector(0, 0, 0xC1)?;
+println!("Sector data: {} bytes", data.len());
 
-Run the test suite:
+let fs = CpmFileSystem::from_image(&image)?;
+for entry in fs.read_dir()? {
+    println!("{}: {} bytes", entry.name, entry.size);
+}
 
-```bash
-# Unit tests
-cargo test --lib
-
-# Integration tests
-cargo test --test integration
-
-# All tests
-cargo test
-
-# With output
-cargo test -- --nocapture
+let mut image = DiskImage::create(FormatSpec::amstrad_data())?;
+image.write_sector(0, 0, 0xC1, &vec![0xE5; 512])?;
+image.save("new_disk.dsk")?;
 ```
-
-Current test coverage: 70+ unit tests, 13 integration tests
-
-## Documentation
-
-Generate and view the documentation:
-
-```bash
-cargo doc --open
-```
-
-## CLI
-
-The `dsk` binary provides an interactive console for exploring DSK files. Run it with `cargo run --bin dsk` or install it with `cargo install --path .`.
-
 
 ## License
 
@@ -265,24 +149,20 @@ Contributions welcome! Please ensure:
 3. Code is formatted: `cargo fmt`
 4. No clippy warnings: `cargo clippy`
 
-## Roadmap
+Run the test suite:
 
-Future ideas:
+```bash
+# Unit tests
+cargo test --lib
 
-- [ ] File system write support (import)
-- [ ] MGT file system completion for export
-- [ ] Wildcard matching for import and export
-- [ ] Header generation for import and existing files
-- [ ] Header stripping for existing files
-- [ ] Copy/Delete/Undelete support
-- [ ] Formatting including custom
-- [ ] Re-interleaving/skewing existing disk images
-- [ ] Defragmenting existing images
-- [ ] Super-optimizer for +3 disk images?
-- [ ] Boot sector extraction
-- [ ] Boot sector generation (+3 only)
+# Integration tests
+cargo test --test integration
+
+# All tests
+cargo test
+```
 
 ## Acknowledgments
 
-- Claude Code, Copilot and Cursor are used in the development of this library and tool
+- Claude Code, Copilot, and Cursor are used in the development of this library and tool
 - Based on my original Pascal/Lazarus DiskImageManager implementation
