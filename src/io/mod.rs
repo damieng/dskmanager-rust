@@ -6,7 +6,10 @@ pub mod reader;
 pub mod mgt_reader;
 /// Writer implementation for DSK files
 pub mod writer;
+/// Reader/writer for JSON format
+pub mod json;
 
+pub use json::{is_json_file, read_json, write_json};
 pub use mgt_reader::{is_mgt_file, read_mgt};
 pub use reader::read_dsk;
 pub use writer::write_dsk;

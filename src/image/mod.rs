@@ -44,7 +44,9 @@ impl DiskImage {
     /// - `.mgt` files are read as raw MGT format
     /// - All other extensions are read as DSK format
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        if crate::io::is_mgt_file(&path) {
+        if crate::io::json::is_json_file(&path) {
+            crate::io::json::read_json(path)
+        } else if crate::io::is_mgt_file(&path) {
             crate::io::read_mgt(path)
         } else {
             crate::io::reader::read_dsk(path)
@@ -189,7 +191,11 @@ impl DiskImage {
 
     /// Save the DSK image to a file
     pub fn save<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        crate::io::writer::write_dsk(self, path)?;
+        if crate::io::json::is_json_file(&path) {
+            crate::io::json::write_json(self, path)?;
+        } else {
+            crate::io::writer::write_dsk(self, path)?;
+        }
         self.changed = false;
         Ok(())
     }
