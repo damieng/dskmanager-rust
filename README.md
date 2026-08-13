@@ -166,7 +166,6 @@ cargo test --test integration
 cargo test
 ```
 
-## Acknowledgments
+## AI Disclosure
 
-- Claude Code, Copilot, and Cursor are used in the development of this library and tool
-- Based on my original Pascal/Lazarus DiskImageManager implementation
+Several AI agents & models have been used in the development of this project referencing my original hand-written Lazarus Disk Image Manager tool.
